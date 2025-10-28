@@ -11,7 +11,9 @@ use hyper::service::Service;
 use hyper::{Request, Response};
 
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use tokio::net::TcpListener;
+use log::*;
+use macaw::{LocalTokioExecutor, TaskExecutor};
+use tokio::net::{TcpListener, TcpStream};
 
 use macaw::support::TokioIo;
 
@@ -32,8 +34,7 @@ pub struct CommandArgs {
     target_url: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+fn main() -> Result<(), anyhow::Error> {
     unsafe { std::env::set_var("RUST_LOG", "debug") };
     tracing_subscriber::fmt::init();
 
@@ -41,28 +42,44 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let addr = SocketAddr::from_str(&args.proxy_addr)?;
     let target_url = http::Uri::from_str(&args.target_url)?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, run_server(LocalTokioExecutor, addr, target_url))?;
+    Ok(())
+}
 
+async fn run_server<Executor>(
+    executor: Executor,
+    addr: SocketAddr,
+    target_url: http::Uri,
+) -> Result<(), anyhow::Error>
+where
+    Executor: TaskExecutor<
+            Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + 'static>>,
+        > + 'static,
+{
     let listener = TcpListener::bind(addr).await?;
-    println!("Listening on http://{}, Proxying to {}", addr, target_url);
+    info!("Listening on http://{}, Proxying to {}", addr, target_url);
 
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
         let target_url = target_url.clone();
-        tokio::task::spawn(async move {
-            let proxy = Proxy::new(target_url)?;
-            if let Err(err) = ServerBuilder::new()
-                .preserve_header_case(true)
-                .title_case_headers(true)
-                .serve_connection(io, proxy)
-                .with_upgrades()
-                .await
-            {
-                println!("Failed to serve connection: {:?}", err);
-            }
-            Ok::<(), anyhow::Error>(())
-        });
+        executor.execute(Box::pin(serve_connection(io, target_url)));
     }
+}
+
+async fn serve_connection(
+    io: TokioIo<TcpStream>,
+    target_url: http::Uri,
+) -> Result<(), anyhow::Error> {
+    let proxy = Proxy::new(target_url)?;
+    if let Err(err) = ServerBuilder::new().serve_connection(io, proxy).await {
+        error!("Failed to serve connection: {:?}", err);
+    }
+    Ok(())
 }
 
 struct Proxy {
@@ -110,12 +127,14 @@ impl Service<Request<Incoming>> for Proxy {
                 let body_as_bytes = body.collect().await.unwrap().to_bytes();
                 Request::from_parts(parts, Full::new(body_as_bytes).boxed())
             };
+            debug!("Request: {:?}", req);
             let res = {
                 let res = client.request(req).await?;
                 let (parts, body) = res.into_parts();
                 let body_as_bytes = Full::new(body.collect().await?.to_bytes()).boxed();
                 Response::from_parts(parts, body_as_bytes)
             };
+            debug!("Response: {:?}", res);
             Ok(res)
         })
     }
@@ -131,6 +150,6 @@ fn build_client() -> Result<HttpsClient, anyhow::Error> {
         .enable_all_versions()
         .wrap_connector(http);
 
-    let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build(https);
+    let client = Client::builder(LocalTokioExecutor).build(https);
     Ok(client)
 }

@@ -10,16 +10,51 @@ use std::{
 use hyper::rt::{Sleep, Timer};
 use pin_project_lite::pin_project;
 
+#[derive(Clone, Copy, Debug)]
+pub struct LocalTokioExecutor;
+
+pub trait TaskExecutor<Fut> {
+    fn execute(&self, fut: Fut);
+}
+
+impl<Fut> TaskExecutor<Fut> for LocalTokioExecutor
+where
+    Fut: Future + 'static,
+{
+    fn execute(&self, fut: Fut) {
+        tokio::task::spawn_local(fut);
+    }
+}
+
+impl<Fut> hyper::rt::Executor<Fut> for LocalTokioExecutor
+where
+    Fut: std::future::Future + 'static,
+{
+    fn execute(&self, fut: Fut) {
+        tokio::task::spawn_local(fut);
+    }
+}
+
 #[derive(Clone)]
 /// An Executor that uses the tokio runtime.
 pub struct TokioExecutor;
 
-impl<F> hyper::rt::Executor<F> for TokioExecutor
+impl<Fut> TaskExecutor<Fut> for TokioExecutor
 where
-    F: std::future::Future + Send + 'static,
-    F::Output: Send + 'static,
+    Fut: Future + Send + 'static,
+    Fut::Output: Send + 'static,
 {
-    fn execute(&self, fut: F) {
+    fn execute(&self, fut: Fut) {
+        tokio::task::spawn(fut);
+    }
+}
+
+impl<Fut> hyper::rt::Executor<Fut> for TokioExecutor
+where
+    Fut: std::future::Future + Send + 'static,
+    Fut::Output: Send + 'static,
+{
+    fn execute(&self, fut: Fut) {
         tokio::task::spawn(fut);
     }
 }
