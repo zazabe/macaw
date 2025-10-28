@@ -1,0 +1,24 @@
+services:
+  macaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - USERNAME=dev
+        - USER_UID=${USER_UID:-1000}
+        - USER_GID=${USER_GID:-1000}
+    user: dev
+    volumes:
+      - ..:/workspace/macaw:cached
+      - ~/.ssh:/home/dev/.ssh:ro
+      - storage:/home/dev/.cache/.storage # Persistent container storage (e.g. store bash history)
+      - vscode-history:/home/dev/.cursor-server/data/User/History # Persistent vscode timeline history
+    networks:
+      - macaw
+
+networks:
+  macaw:
+
+volumes:
+  storage:
+  vscode-history:

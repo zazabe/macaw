@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "run",
+            "type": "cargo",
+            "command": "run",
+            "options": {
+                "env": {
+                    "RUST_LOG": "debug"
+                }
+            }
+        },
+        {
+            "label": "test",
+            "type": "cargo",
+            "command": "test",
+            "options": {
+                "env": {
+                    "RUST_LOG": "debug"
+                }
+            }
+        },
+        {
+            "label": "clippy",
+            "type": "cargo",
+            "command": "clippy",
+            "options": {
+                "env": {
+                    "RUST_LOG": "debug"
+                }
+            }
+        },
+    ]
+}
