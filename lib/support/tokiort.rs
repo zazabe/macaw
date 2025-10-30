@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 //! Various runtimes for hyper
+use core::fmt;
 use std::{
     future::Future,
     pin::Pin,
@@ -10,19 +11,35 @@ use std::{
 use hyper::rt::{Sleep, Timer};
 use pin_project_lite::pin_project;
 
+#[derive(Debug)]
+pub struct TokioTask {
+    handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
+}
+
+impl TokioTask {
+    pub fn cancel(&self) {
+        self.handle.abort();
+    }
+}
+
+pub trait TaskExecutor<
+    Fut = Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + 'static>>,
+> where
+    Self: Send + Sync + Clone + 'static,
+{
+    fn execute(&self, fut: Fut) -> TokioTask;
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LocalTokioExecutor;
 
-pub trait TaskExecutor<Fut> {
-    fn execute(&self, fut: Fut);
-}
-
 impl<Fut> TaskExecutor<Fut> for LocalTokioExecutor
 where
-    Fut: Future + 'static,
+    Fut: Future<Output = Result<(), anyhow::Error>> + 'static,
 {
-    fn execute(&self, fut: Fut) {
-        tokio::task::spawn_local(fut);
+    fn execute(&self, fut: Fut) -> TokioTask {
+        let handle = tokio::task::spawn_local(fut);
+        TokioTask { handle }
     }
 }
 
@@ -41,11 +58,12 @@ pub struct TokioExecutor;
 
 impl<Fut> TaskExecutor<Fut> for TokioExecutor
 where
-    Fut: Future + Send + 'static,
+    Fut: Future<Output = Result<(), anyhow::Error>> + Send + 'static,
     Fut::Output: Send + 'static,
 {
-    fn execute(&self, fut: Fut) {
-        tokio::task::spawn(fut);
+    fn execute(&self, fut: Fut) -> TokioTask {
+        let handle = tokio::task::spawn(fut);
+        TokioTask { handle }
     }
 }
 
