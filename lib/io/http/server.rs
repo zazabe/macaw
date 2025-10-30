@@ -88,7 +88,7 @@ struct Handler {
 }
 
 impl Service<http::Request<Incoming>> for Handler {
-    type Response = http::Response<BoxBody<Bytes, Infallible>>;
+    type Response = HttpResponse;
     type Error = anyhow::Error;
     type Future =
         std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>>>>;
@@ -98,7 +98,7 @@ impl Service<http::Request<Incoming>> for Handler {
         Box::pin(async move {
             let (parts, body) = req.into_parts();
             let bytes = body.collect().await?.to_bytes();
-            let rebuilt_req = http::Request::from_parts(parts, Full::new(bytes.clone()).boxed());
+            let rebuilt_req = http::Request::from_parts(parts, BodyBytes::new(bytes));
             let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
             let env = HttpRequestEnvelope {
                 request: rebuilt_req,

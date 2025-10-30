@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use macaw::prelude::*;
 
@@ -11,15 +11,14 @@ fn main() -> Result<(), anyhow::Error> {
         .build()?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async {
-        let mut builder = MacawBuilder::new(LocalTokioExecutor, RecordScheduler::new());
-        builder
+        let mut setup = MacawSetup::new(LocalTokioExecutor, RecordScheduler::new());
+        setup
             .add_http_proxy("127.0.0.1:8800".parse()?, "https://www.perdu.com/".parse()?)
             .await?;
-        let mut task = builder.run();
+        let mut macaw = setup.start();
 
         tokio::time::sleep(Duration::from_secs(10)).await;
-        task.stop();
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        macaw.record(PathBuf::from("./data/record.yaml")).await?;
 
         Ok::<(), anyhow::Error>(())
     })?;

@@ -1,6 +1,6 @@
 use crate::lib::*;
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub(crate) enum ProxyId {
     Uuid(Uuid),
 }

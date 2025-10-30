@@ -1,6 +1,6 @@
 use crate::lib::*;
 
-pub struct MacawBuilder<Exec, Sched>
+pub struct MacawSetup<Exec, Sched>
 where
     Exec: TaskExecutor + 'static,
     Sched: Scheduler + 'static,
@@ -9,7 +9,7 @@ where
     scheduler: Sched,
 }
 
-impl<Exec, Sched> MacawBuilder<Exec, Sched>
+impl<Exec, Sched> MacawSetup<Exec, Sched>
 where
     Exec: TaskExecutor + 'static,
     Sched: Scheduler + 'static,
@@ -31,26 +31,31 @@ where
             .await
     }
 
-    pub fn run(self) -> MacawGuard {
+    pub fn start(self) -> Macaw {
         let Self {
             executor,
             mut scheduler,
         } = self;
+        let (tx, rx) = mpsc::unbounded_channel();
         let task = executor.execute(Box::pin(async move {
-            scheduler.start().await?;
+            scheduler.start(rx).await?;
             Ok(())
         }));
-        MacawGuard::new(task)
+        Macaw::new(task, tx)
     }
 }
 
-pub struct MacawGuard {
+pub struct Macaw {
     task: Option<TokioTask>,
+    tx: mpsc::UnboundedSender<MacawCommand>,
 }
 
-impl MacawGuard {
-    fn new(task: TokioTask) -> Self {
-        Self { task: Some(task) }
+impl Macaw {
+    fn new(task: TokioTask, tx: mpsc::UnboundedSender<MacawCommand>) -> Self {
+        Self {
+            task: Some(task),
+            tx,
+        }
     }
 
     pub fn stop(&mut self) {
@@ -58,12 +63,36 @@ impl MacawGuard {
             task.cancel();
         }
     }
+
+    pub async fn record(&mut self, path: PathBuf) -> Result<(), anyhow::Error> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send(MacawCommand::record(tx, path))?;
+        rx.await?
+    }
 }
 
-impl Drop for MacawGuard {
+impl Drop for Macaw {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+pub struct MacawCommand {
+    pub(crate) kind: MacawCommandKind,
+    pub(crate) reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
+}
+
+impl MacawCommand {
+    pub fn record(reply_tx: oneshot::Sender<Result<(), anyhow::Error>>, path: PathBuf) -> Self {
+        Self {
+            kind: MacawCommandKind::Record(path),
+            reply_tx,
+        }
+    }
+}
+
+pub(crate) enum MacawCommandKind {
+    Record(PathBuf),
 }
 
 #[async_trait::async_trait(?Send)]
@@ -76,5 +105,8 @@ pub trait Scheduler {
     ) -> Result<(), anyhow::Error>
     where
         Exec: TaskExecutor;
-    async fn start(&mut self) -> Result<(), anyhow::Error>;
+    async fn start(
+        &mut self,
+        rx: mpsc::UnboundedReceiver<MacawCommand>,
+    ) -> Result<(), anyhow::Error>;
 }

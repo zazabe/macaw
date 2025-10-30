@@ -1,4 +1,9 @@
-#![allow(dead_code, unused_variables, unused_imports)]
+#![allow(
+    dead_code,
+    unused_variables,
+    unused_imports,
+    clippy::match_single_binding
+)]
 
 pub(crate) mod io;
 pub(crate) mod macaw;
@@ -17,10 +22,12 @@ pub(crate) mod lib {
     pub(crate) use anyhow::{Result, anyhow};
     pub(crate) use bytes::Bytes;
     pub(crate) use chrono::{DateTime, Utc};
+    pub(crate) use itertools::Itertools;
     pub(crate) use serde::{Deserialize, Serialize};
     pub(crate) use std::collections::HashMap;
     pub(crate) use std::fmt;
     pub(crate) use std::net::SocketAddr;
+    pub(crate) use std::path::PathBuf;
     pub(crate) use std::pin::Pin;
     pub(crate) use tokio::net::{TcpListener, TcpStream};
     pub(crate) use tokio::sync::{mpsc, oneshot};

@@ -10,12 +10,9 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 
-pub(crate) type HttpRequest = http::Request<BoxBody<Bytes, Infallible>>;
-pub(crate) type HttpResponse = http::Response<BoxBody<Bytes, Infallible>>;
-
 #[derive(Debug)]
 pub(crate) struct HttpClient {
-    client: Client<hyper_rustls::HttpsConnector<HttpConnector>, BoxBody<Bytes, Infallible>>,
+    client: Client<hyper_rustls::HttpsConnector<HttpConnector>, BodyBytes>,
 }
 
 impl HttpClient {
@@ -47,14 +44,13 @@ impl HttpClient {
         let request = {
             let (parts, body) = request.into_parts();
             let bytes = body.collect().await?.to_bytes();
-            HttpRequest::from_parts(parts, Full::new(bytes.clone()).boxed())
+            HttpRequest::from_parts(parts, BodyBytes::new(bytes))
         };
         let response = {
             let res = self.client.request(request).await?;
             let (parts, body) = res.into_parts();
             let bytes = body.collect().await?.to_bytes();
-            let res_body = Full::new(bytes).boxed();
-            HttpResponse::from_parts(parts, res_body)
+            HttpResponse::from_parts(parts, BodyBytes::new(bytes))
         };
         Ok(response)
     }

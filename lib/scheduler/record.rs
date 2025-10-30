@@ -5,7 +5,7 @@ use crate::lib::*;
 
 #[derive(Debug)]
 pub struct RecordScheduler {
-    events: Vec<RecordEvent>,
+    events: EventStore,
     tx: mpsc::UnboundedSender<DownstreamData>,
     rx: mpsc::UnboundedReceiver<DownstreamData>,
     proxies: Proxies<HttpRecordProxy, WsRecordProxy>,
@@ -18,7 +18,7 @@ impl RecordScheduler {
             tx,
             rx,
             proxies: Proxies::<HttpRecordProxy, WsRecordProxy>::default(),
-            events: Vec::new(),
+            events: EventStore::new(),
         }
     }
 }
@@ -45,17 +45,48 @@ impl Scheduler for RecordScheduler {
         Ok(())
     }
 
-    async fn start(&mut self) -> Result<(), anyhow::Error> {
-        while let Some(event) = self.rx.recv().await {
-            match event {
-                DownstreamData::Http(id, envelope) => {
-                    let res = self.downstream_http_request(id, envelope.request).await?;
-                    envelope
-                        .response_tx
-                        .send(res)
-                        .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
+    async fn start(
+        &mut self,
+        mut rx: mpsc::UnboundedReceiver<MacawCommand>,
+    ) -> Result<(), anyhow::Error> {
+        loop {
+            tokio::select! {
+                Some(event) = rx.recv() => {
+                    match event {
+                        MacawCommand { kind, reply_tx } => {
+                            self.handle_command(kind, reply_tx).await?;
+                        }
+                    }
+                }
+                Some(event) = self.rx.recv() => {
+                    match event {
+                        DownstreamData::Http(id, envelope) => {
+                            let res = self.downstream_http_request(id, envelope.request).await?;
+                            envelope.response_tx.send(res).map_err(|_| anyhow::anyhow!("Failed to send response"))?;
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+impl RecordScheduler {
+    async fn handle_command(
+        &mut self,
+        kind: MacawCommandKind,
+        reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
+    ) -> Result<(), anyhow::Error> {
+        let result = self.try_handle_command(kind).await;
+        reply_tx
+            .send(result)
+            .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
+        Ok(())
+    }
+
+    async fn try_handle_command(&mut self, kind: MacawCommandKind) -> Result<(), anyhow::Error> {
+        match kind {
+            MacawCommandKind::Record(path) => self.events.save_file(path)?,
         }
         Ok(())
     }
@@ -74,7 +105,9 @@ impl RecordScheduler {
             parts.uri = uri;
             HttpRequest::from_parts(parts, body)
         };
+        self.events.push_http_request(id, &req)?;
         let res = proxy.upstream.request(req).await?;
+        self.events.push_http_response(id, &res)?;
         Ok(res)
     }
 }
