@@ -17,6 +17,26 @@ pub(crate) mod http_method_serde {
     }
 }
 
+pub(crate) mod http_uri_serde {
+    use http::Uri;
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(uri: &Uri, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(uri.to_string().as_str())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Uri, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<Uri>().map_err(serde::de::Error::custom)
+    }
+}
+
 pub(crate) mod http_version_serde {
     use http::Version;
     use serde::{self, Deserialize, Deserializer, Serializer};

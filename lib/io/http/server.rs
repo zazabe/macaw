@@ -10,15 +10,15 @@ use std::convert::Infallible;
 
 pub(crate) struct HttpRequestEnvelope {
     pub(crate) request: HttpRequest,
-    pub(crate) response_tx: oneshot::Sender<HttpResponse>,
+    pub(crate) response_tx: oneshot::Sender<Box<dyn RecordEvent>>,
 }
 
 #[dyn_clonable::clonable]
-pub(crate) trait HttpServerSender: Clone + 'static {
+pub(crate) trait HttpServerRequestSender: Clone + 'static {
     fn send(&self, envelope: HttpRequestEnvelope) -> Result<(), anyhow::Error>;
 }
 
-impl fmt::Debug for Box<dyn HttpServerSender> {
+impl fmt::Debug for Box<dyn HttpServerRequestSender> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "HttpServerSender")
     }
@@ -27,13 +27,13 @@ impl fmt::Debug for Box<dyn HttpServerSender> {
 #[derive(Debug)]
 pub(crate) struct HttpServer {
     addr: SocketAddr,
-    tx: Box<dyn HttpServerSender>,
+    tx: Box<dyn HttpServerRequestSender>,
     local_addr: Option<SocketAddr>,
     task: Option<TokioTask>,
 }
 
 impl HttpServer {
-    pub(crate) fn new(addr: SocketAddr, tx: Box<dyn HttpServerSender>) -> Self {
+    pub(crate) fn new(addr: SocketAddr, tx: Box<dyn HttpServerRequestSender>) -> Self {
         Self {
             addr,
             tx,
@@ -84,7 +84,7 @@ impl HttpServer {
 
 #[derive(Debug, Clone)]
 struct Handler {
-    sender: Box<dyn HttpServerSender>,
+    sender: Box<dyn HttpServerRequestSender>,
 }
 
 impl Service<http::Request<Incoming>> for Handler {
@@ -110,7 +110,10 @@ impl Service<http::Request<Incoming>> for Handler {
             let resp = resp_rx
                 .await
                 .map_err(|_| anyhow::anyhow!("oneshot cancelled"))?;
-            Ok::<_, anyhow::Error>(resp)
+            let response = resp
+                .downcast::<HttpResponseEvent>()
+                .map_err(|_| anyhow::anyhow!("Failed to downcast response to HttpResponseEvent"))?;
+            response.to_response()
         })
     }
 }

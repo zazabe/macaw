@@ -11,7 +11,7 @@ fn main() -> Result<(), anyhow::Error> {
         .build()?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async {
-        let mut setup = MacawSetup::new(LocalTokioExecutor, RecordScheduler::new());
+        let mut setup = MacawSetup::new(LocalTokioExecutor, Recorder::new());
         setup
             .add_http_proxy("127.0.0.1:8800".parse()?, "https://www.perdu.com/".parse()?)
             .await?;

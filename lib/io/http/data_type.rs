@@ -23,6 +23,24 @@ impl BodyBytes {
     }
 }
 
+impl From<String> for BodyBytes {
+    fn from(s: String) -> Self {
+        BodyBytes::new(Bytes::from(s))
+    }
+}
+
+impl From<&str> for BodyBytes {
+    fn from(s: &str) -> Self {
+        BodyBytes::new(Bytes::from(s.as_bytes().to_vec()))
+    }
+}
+
+impl From<Vec<u8>> for BodyBytes {
+    fn from(v: Vec<u8>) -> Self {
+        BodyBytes::new(Bytes::from(v))
+    }
+}
+
 impl hyper::body::Body for BodyBytes {
     type Data = Bytes;
     type Error = Infallible;

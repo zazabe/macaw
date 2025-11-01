@@ -3,42 +3,32 @@ use crate::lib::*;
 pub struct MacawSetup<Exec, Sched>
 where
     Exec: TaskExecutor + 'static,
-    Sched: Scheduler + 'static,
+    Sched: MacawInterface + 'static,
 {
-    executor: Exec,
-    scheduler: Sched,
+    pub(crate) executor: Exec,
+    pub(crate) processor: Sched,
 }
 
-impl<Exec, Sched> MacawSetup<Exec, Sched>
+impl<Exec, Proc> MacawSetup<Exec, Proc>
 where
     Exec: TaskExecutor + 'static,
-    Sched: Scheduler + 'static,
+    Proc: MacawInterface + 'static,
 {
-    pub fn new(executor: Exec, scheduler: Sched) -> Self {
+    pub fn new(executor: Exec, processor: Proc) -> Self {
         Self {
             executor,
-            scheduler,
+            processor,
         }
-    }
-
-    pub async fn add_http_proxy(
-        &mut self,
-        addr: SocketAddr,
-        target_url: http::Uri,
-    ) -> Result<(), anyhow::Error> {
-        self.scheduler
-            .add_http_proxy(self.executor.clone(), addr, target_url)
-            .await
     }
 
     pub fn start(self) -> Macaw {
         let Self {
             executor,
-            mut scheduler,
+            mut processor,
         } = self;
         let (tx, rx) = mpsc::unbounded_channel();
         let task = executor.execute(Box::pin(async move {
-            scheduler.start(rx).await?;
+            processor.start(rx).await?;
             Ok(())
         }));
         Macaw::new(task, tx)
@@ -96,15 +86,7 @@ pub(crate) enum MacawCommandKind {
 }
 
 #[async_trait::async_trait(?Send)]
-pub trait Scheduler {
-    async fn add_http_proxy<Exec>(
-        &mut self,
-        executor: Exec,
-        addr: SocketAddr,
-        target_url: http::Uri,
-    ) -> Result<(), anyhow::Error>
-    where
-        Exec: TaskExecutor;
+pub trait MacawInterface {
     async fn start(
         &mut self,
         rx: mpsc::UnboundedReceiver<MacawCommand>,

@@ -3,16 +3,16 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RecordFile {
     pub(crate) header: RecordHeader,
-    pub(crate) events: Vec<RecordEvent>,
+    pub(crate) events: Vec<Event<Box<dyn RecordEvent>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct EventStore {
     header: RecordHeader,
-    events: Vec<RecordEvent>,
+    events: Vec<Event<Box<dyn RecordEvent>>>,
 }
 
 impl EventStore {
@@ -62,28 +62,8 @@ impl EventStore {
         Ok(())
     }
 
-    pub(crate) fn push_http_request(
-        &mut self,
-        id: ProxyId,
-        req: &HttpRequest,
-    ) -> Result<(), anyhow::Error> {
-        self.events.push(RecordEvent::HttpRequest(Event::new(
-            id,
-            HttpRequestEvent::from_request(req)?,
-        )));
-        Ok(())
-    }
-
-    pub(crate) fn push_http_response(
-        &mut self,
-        id: ProxyId,
-        res: &HttpResponse,
-    ) -> Result<(), anyhow::Error> {
-        self.events.push(RecordEvent::HttpResponse(Event::new(
-            id,
-            HttpResponseEvent::from_response(res)?,
-        )));
-        Ok(())
+    pub(crate) fn push(&mut self, id: ProxyId, event: Box<dyn RecordEvent>) {
+        self.events.push(Event::new(id, event));
     }
 
     pub(crate) fn header(&self) -> &RecordHeader {
@@ -92,40 +72,5 @@ impl EventStore {
 
     pub(crate) fn header_mut(&mut self) -> &mut RecordHeader {
         &mut self.header
-    }
-
-    pub(crate) fn push(&mut self, event: RecordEvent) {
-        self.events.push(event);
-    }
-
-    pub(crate) fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = RecordEvent>,
-    {
-        self.events.extend(iter);
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.events.clear();
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.events.len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.events.is_empty()
-    }
-
-    pub(crate) fn events(&self) -> &[RecordEvent] {
-        &self.events
-    }
-
-    pub(crate) fn events_mut(&mut self) -> &mut [RecordEvent] {
-        &mut self.events
-    }
-
-    pub(crate) fn into_inner(self) -> Vec<RecordEvent> {
-        self.events
     }
 }

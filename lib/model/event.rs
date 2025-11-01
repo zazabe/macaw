@@ -1,15 +1,31 @@
+use std::any::Any;
+
 use base64::{Engine, prelude::BASE64_STANDARD};
 
 use crate::lib::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum RecordEvent {
-    HttpRequest(Event<HttpRequestEvent>),
-    HttpResponse(Event<HttpResponseEvent>),
-    WsUpstreamMessage(Event<WsUpstreamMessageEvent>),
-    WsDownstreamMessage(Event<WsDownstreamMessageEvent>),
-    WsOpen(Event<WsOpenEvent>),
-    WsClose(Event<WsCloseEvent>),
+#[dyn_clonable::clonable]
+#[typetag::serde(tag = "type")]
+pub(crate) trait RecordEvent: Any + fmt::Debug + Clone {}
+
+impl dyn RecordEvent {
+    pub fn downcast<T: RecordEvent + 'static>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
+        if (*self).as_any().is::<T>() {
+            // It is sound to convert; the trait object is actually T
+            Ok(self.downcast_unchecked())
+        } else {
+            Err(self)
+        }
+    }
+
+    // Helper for unchecked downcast (only call if is::<T>() successful)
+    fn downcast_unchecked<T: RecordEvent + 'static>(self: Box<Self>) -> Box<T> {
+        unsafe { Box::from_raw(Box::into_raw(self) as *mut T) }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +66,8 @@ impl<D> Event<D> {
 pub(crate) struct HttpRequestEvent {
     #[serde(with = "http_method_serde")]
     pub(crate) method: http::Method,
-    pub(crate) uri: String,
+    #[serde(with = "http_uri_serde")]
+    pub(crate) uri: http::Uri,
     #[serde(with = "http_version_serde")]
     pub(crate) version: http::Version,
     pub(crate) headers: Vec<(String, String)>,
@@ -61,7 +78,7 @@ impl HttpRequestEvent {
     pub(crate) fn from_request(req: &HttpRequest) -> Result<Self, anyhow::Error> {
         Ok(Self {
             method: req.method().clone(),
-            uri: req.uri().to_string(),
+            uri: req.uri().clone(),
             version: req.version(),
             headers: req
                 .headers()
@@ -71,7 +88,28 @@ impl HttpRequestEvent {
             body: Some(Content::from_body(req.body())),
         })
     }
+
+    pub(crate) fn to_request(&self) -> Result<HttpRequest, anyhow::Error> {
+        let mut builder = http::Request::builder()
+            .method(self.method.clone())
+            .uri(self.uri.clone())
+            .version(self.version);
+
+        for (key, value) in &self.headers {
+            builder = builder.header(key, value);
+        }
+
+        let body = match &self.body {
+            Some(content) => content.clone().into_body()?,
+            None => BodyBytes::new(Bytes::new()),
+        };
+
+        Ok(builder.body(body)?)
+    }
 }
+
+#[typetag::serde]
+impl RecordEvent for HttpRequestEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HttpResponseEvent {
@@ -96,28 +134,60 @@ impl HttpResponseEvent {
             body: Some(Content::from_body(res.body())),
         })
     }
+
+    pub(crate) fn to_response(&self) -> Result<HttpResponse, anyhow::Error> {
+        let mut builder = http::Response::builder()
+            .status(self.status)
+            .version(self.version);
+
+        for (key, value) in &self.headers {
+            builder = builder.header(key, value);
+        }
+
+        let body = match &self.body {
+            Some(content) => content.clone().into_body()?,
+            None => BodyBytes::new(Bytes::new()),
+        };
+
+        Ok(builder.body(body)?)
+    }
 }
+
+#[typetag::serde]
+impl RecordEvent for HttpResponseEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WsUpstreamMessageEvent {
     message: Content,
 }
 
+#[typetag::serde]
+impl RecordEvent for WsUpstreamMessageEvent {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WsDownstreamMessageEvent {
     message: Content,
 }
+
+#[typetag::serde]
+impl RecordEvent for WsDownstreamMessageEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WsOpenEvent {
     pub(crate) request: HttpRequestEvent,
 }
 
+#[typetag::serde]
+impl RecordEvent for WsOpenEvent {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WsCloseEvent {
     pub(crate) reason: String,
     pub(crate) code: u16,
 }
+
+#[typetag::serde]
+impl RecordEvent for WsCloseEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Content {
@@ -137,6 +207,12 @@ impl Content {
                 encoding: ContentEncoding::Base64,
                 data: BASE64_STANDARD.encode(e.as_bytes()),
             },
+        }
+    }
+    pub(crate) fn into_body(self) -> Result<BodyBytes, anyhow::Error> {
+        match self.encoding {
+            ContentEncoding::Plain => Ok(BodyBytes::from(self.data)),
+            ContentEncoding::Base64 => Ok(BodyBytes::from(BASE64_STANDARD.decode(self.data)?)),
         }
     }
 }
