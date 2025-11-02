@@ -1,6 +1,5 @@
 use crate::{
-    prelude::Message,
-    proxy::Proxy,
+    processor::{Message, proxy::Proxy},
     support::{TaskExecutor, TokioTask},
 };
 use anyhow::Result;
@@ -10,7 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 pub struct MacawSetup<Exec, Proc>
 where
     Exec: TaskExecutor + 'static,
-    Proc: MacawInterface + 'static,
+    Proc: Processor + 'static,
 {
     pub(crate) executor: Exec,
     pub(crate) processor: Proc,
@@ -19,7 +18,7 @@ where
 impl<Exec, Proc> MacawSetup<Exec, Proc>
 where
     Exec: TaskExecutor + 'static,
-    Proc: MacawInterface + 'static,
+    Proc: Processor + 'static,
 {
     pub fn new(executor: Exec, processor: Proc) -> Self {
         Self {
@@ -101,10 +100,8 @@ pub(crate) enum MacawCommandKind {
 }
 
 #[async_trait::async_trait(?Send)]
-pub trait MacawInterface {
-    fn add_proxy<P: Proxy + 'static>(&mut self, proxy: P);
-
-    fn sender(&self) -> &mpsc::UnboundedSender<Message>;
+pub trait Processor {
+    fn add_proxy<P: Proxy + 'static>(&mut self, rx: mpsc::UnboundedReceiver<Message>, proxy: P);
 
     async fn start(
         &mut self,

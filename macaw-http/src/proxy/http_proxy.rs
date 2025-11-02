@@ -19,24 +19,27 @@ pub(crate) struct HttpRecordProxy {
 impl HttpRecordProxy {
     pub(crate) async fn new<Executor>(
         executor: Executor,
-        tx: &mpsc::UnboundedSender<Message>,
         addr: SocketAddr,
         target_url: TargetUrl,
-    ) -> Result<Self, anyhow::Error>
+    ) -> Result<(mpsc::UnboundedReceiver<Message>, Self), anyhow::Error>
     where
         Executor: TaskExecutor + Clone,
     {
         let id = ProxyId::uuid();
         let upstream = HttpClient::new(executor.clone(), addr)?;
+        let (tx, rx) = mpsc::unbounded_channel();
         let mut downstream = HttpServer::new(addr, Box::new(Sender::new(id, tx.clone())));
         downstream.start(executor.clone()).await?;
 
-        Ok(Self {
-            id,
-            upstream,
-            downstream,
-            target_url,
-        })
+        Ok((
+            rx,
+            Self {
+                id,
+                upstream,
+                downstream,
+                target_url,
+            },
+        ))
     }
 }
 
@@ -87,33 +90,6 @@ impl Proxy for HttpRecordProxy {
     }
 }
 
-trait HttpMacawInterface {
-    async fn add_http_proxy<Exec>(
-        &mut self,
-        executor: Exec,
-        addr: SocketAddr,
-        target_url: TargetUrl,
-    ) -> Result<(), anyhow::Error>
-    where
-        Exec: TaskExecutor;
-}
-
-impl HttpMacawInterface for Recorder {
-    async fn add_http_proxy<Exec>(
-        &mut self,
-        executor: Exec,
-        addr: SocketAddr,
-        target_url: TargetUrl,
-    ) -> Result<(), anyhow::Error>
-    where
-        Exec: TaskExecutor,
-    {
-        let proxy = HttpRecordProxy::new(executor, self.sender(), addr, target_url).await?;
-        self.add_proxy(proxy);
-        Ok(())
-    }
-}
-
 #[async_trait::async_trait(?Send)]
 pub trait HttpMacawSetup {
     async fn add_http_proxy(
@@ -134,8 +110,8 @@ where
         target_url: TargetUrl,
     ) -> Result<(), anyhow::Error> {
         let executor = self.executor();
-        self.processor()
-            .add_http_proxy(executor, addr, target_url)
-            .await
+        let (rx, proxy) = HttpRecordProxy::new(executor, addr, target_url).await?;
+        self.processor().add_proxy(rx, proxy);
+        Ok(())
     }
 }

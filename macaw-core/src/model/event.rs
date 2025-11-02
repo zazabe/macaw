@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::proxy::ProxyId;
+use crate::processor::proxy::ProxyId;
 
 #[dyn_clonable::clonable]
 #[typetag::serde(tag = "type")]

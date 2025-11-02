@@ -1,9 +1,12 @@
-use std::str::FromStr;
 use std::fmt;
-use std::collections::HashMap;
+use std::str::FromStr;
+use std::task::{Context, Poll};
+use std::{collections::HashMap, pin::Pin};
 
+use futures::{Stream, stream};
 use http;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::model::RecordEvent;
@@ -48,27 +51,38 @@ pub trait Proxy: fmt::Debug + 'static {
     ) -> Result<(), anyhow::Error>;
 }
 
-#[derive(Debug)]
+pub(crate) trait ProxyStream: Stream<Item = ()> + 'static {}
+
+impl<T> ProxyStream for T where T: Stream<Item = ()> + 'static {}
+
+pub(crate) type BoxedProxyStream = Pin<Box<dyn ProxyStream>>;
+
 pub(crate) struct Proxies {
-    proxies: HashMap<ProxyId, Box<dyn Proxy>>,
+    proxies: stream::SelectAll<BoxedProxyStream>,
 }
 
 impl Proxies {
     pub(crate) fn default() -> Self {
         Self {
-            proxies: HashMap::new(),
+            proxies: stream::SelectAll::new(),
         }
     }
 
-    pub(crate) fn insert_proxy<P: Proxy + 'static>(&mut self, proxy: P) {
-        self.proxies.insert(proxy.id(), Box::new(proxy));
+    pub(crate) fn add_proxy(&mut self, stream: BoxedProxyStream) {
+        self.proxies.push(stream);
     }
+}
 
-    pub(crate) fn get_proxy(&self, proxy_id: &ProxyId) -> Result<&dyn Proxy, anyhow::Error> {
-        self.proxies
-            .get(proxy_id)
-            .map(|proxy| proxy.as_ref())
-            .ok_or(anyhow::anyhow!("Proxy not found"))
+impl fmt::Debug for Proxies {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Proxies")
+    }
+}
+
+impl Stream for Proxies {
+    type Item = ();
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.get_mut().proxies).poll_next(cx)
     }
 }
 
@@ -118,7 +132,10 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn new(id: ProxyId, tx: tokio::sync::mpsc::UnboundedSender<crate::processor::Message>) -> Self {
+    pub fn new(
+        id: ProxyId,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::processor::Message>,
+    ) -> Self {
         Self { id, tx }
     }
 }
