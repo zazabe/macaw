@@ -1,13 +1,6 @@
-use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use crate::lib::*;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use tracing::debug;
-
-use crate::model::{Event, RecordEvent, RecordHeader};
-use crate::processor::proxy::ProxyId;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RecordFile {

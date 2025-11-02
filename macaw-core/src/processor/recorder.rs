@@ -1,13 +1,4 @@
-use anyhow::Result;
-use async_stream::stream;
-use futures::StreamExt;
-use tokio::sync::{mpsc, oneshot};
-use tracing::error;
-
-use crate::io::fs::EventStore;
-use crate::macaw::{MacawCommand, Processor, RecordCommand};
-use crate::model::RecordEvent;
-use crate::processor::proxy::*;
+use crate::lib::*;
 
 pub enum Message<
     DownstreamInput: RecordEvent,
@@ -45,7 +36,7 @@ impl Recorder {
 
     async fn handle_command(
         &mut self,
-        kind: RecordCommand,
+        kind: RecorderCommand,
         reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
     ) -> Result<(), anyhow::Error> {
         let result = self.try_handle_command(kind).await;
@@ -55,9 +46,9 @@ impl Recorder {
         Ok(())
     }
 
-    async fn try_handle_command(&mut self, kind: RecordCommand) -> Result<(), anyhow::Error> {
+    async fn try_handle_command(&mut self, kind: RecorderCommand) -> Result<(), anyhow::Error> {
         match kind {
-            RecordCommand::Record(path) => self.events.save_file(path)?,
+            RecorderCommand::Record(path) => self.events.save_file(path)?,
         }
         Ok(())
     }
@@ -146,7 +137,7 @@ impl Default for Recorder {
 
 #[async_trait::async_trait(?Send)]
 impl Processor for Recorder {
-    type Command = RecordCommand;
+    type Command = RecorderCommand;
 
     fn add_proxy<P: Proxy>(
         &mut self,
@@ -165,7 +156,7 @@ impl Processor for Recorder {
 
     async fn start(
         &mut self,
-        mut rx: mpsc::UnboundedReceiver<MacawCommand<RecordCommand>>,
+        mut rx: mpsc::UnboundedReceiver<MacawCommand<RecorderCommand>>,
     ) -> Result<(), anyhow::Error> {
         loop {
             tokio::select! {
@@ -179,5 +170,18 @@ impl Processor for Recorder {
                 _ = self.proxies.next() => {}
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RecorderCommand {
+    Record(PathBuf),
+}
+
+impl ProcessorCommand for RecorderCommand {}
+
+impl Macaw<RecorderCommand> {
+    pub async fn record(&mut self, path: PathBuf) -> Result<(), anyhow::Error> {
+        self.send_command(RecorderCommand::Record(path)).await
     }
 }

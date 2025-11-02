@@ -1,11 +1,4 @@
-use crate::{
-    model::RecordEvent,
-    processor::{Message, proxy::Proxy},
-    support::{TaskExecutor, TokioTask},
-};
-use anyhow::Result;
-use std::path::PathBuf;
-use tokio::sync::{mpsc, oneshot};
+use crate::lib::*;
 
 pub struct MacawSetup<Exec, Proc>
 where
@@ -50,12 +43,12 @@ where
     }
 }
 
-pub struct Macaw<Command> {
+pub struct Macaw<Command: ProcessorCommand> {
     task: Option<TokioTask>,
     tx: mpsc::UnboundedSender<MacawCommand<Command>>,
 }
 
-impl<Command> Macaw<Command> {
+impl<Command: ProcessorCommand> Macaw<Command> {
     fn new(task: TokioTask, tx: mpsc::UnboundedSender<MacawCommand<Command>>) -> Self {
         Self {
             task: Some(task),
@@ -68,43 +61,40 @@ impl<Command> Macaw<Command> {
             task.cancel();
         }
     }
-}
 
-impl Macaw<RecordCommand> {
-    pub async fn record(&mut self, path: PathBuf) -> Result<(), anyhow::Error> {
+    pub(crate) async fn send_command(&self, command: Command) -> Result<(), anyhow::Error> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send(MacawCommand::record(tx, path))?;
-        rx.await?
+        self.tx
+            .send(MacawCommand::new(command.clone(), tx))
+            .map_err(|_| anyhow::anyhow!("Failed to send command: {:?}", command))?;
+        rx.await
+            .map_err(|_| anyhow::anyhow!("Failed to receive command response: {:?}", command))??;
+        Ok(())
     }
 }
 
-impl<Command> Drop for Macaw<Command> {
+impl<Command: ProcessorCommand> Drop for Macaw<Command> {
     fn drop(&mut self) {
         self.stop();
     }
 }
 
-pub struct MacawCommand<Command> {
+pub trait ProcessorCommand: fmt::Debug + Clone + 'static {}
+
+pub struct MacawCommand<Command: ProcessorCommand> {
     pub(crate) kind: Command,
     pub(crate) reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
 }
 
-pub enum RecordCommand {
-    Record(PathBuf),
-}
-
-impl MacawCommand<RecordCommand> {
-    pub fn record(reply_tx: oneshot::Sender<Result<(), anyhow::Error>>, path: PathBuf) -> Self {
-        Self {
-            kind: RecordCommand::Record(path),
-            reply_tx,
-        }
+impl<Command: ProcessorCommand> MacawCommand<Command> {
+    pub(crate) fn new(kind: Command, reply_tx: oneshot::Sender<Result<(), anyhow::Error>>) -> Self {
+        Self { kind, reply_tx }
     }
 }
 
 #[async_trait::async_trait(?Send)]
 pub trait Processor {
-    type Command;
+    type Command: ProcessorCommand;
 
     fn add_proxy<P: Proxy>(
         &mut self,
