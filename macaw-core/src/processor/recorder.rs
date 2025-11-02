@@ -108,18 +108,24 @@ where
 {
     match message {
         Message::Downstream(message) => {
-            let request_event = proxy.redact_downstream_message(message.event).await?;
-            events.push(message.proxy_id, request_event.clone());
-            let result = proxy.process_downstream_message(request_event).await?;
+            let request = proxy.redact_downstream_message(message.event).await?;
+            events.push(message.proxy_id, request.clone());
+            let result = proxy.process_downstream_message(request).await?;
             match (result, message.response_tx) {
-                (Some(response_event), Some(response_tx)) => {
-                    events.push(message.proxy_id, response_event.clone());
+                (Some(response), Some(response_tx)) => {
+                    events.push(message.proxy_id, response.clone());
                     response_tx
-                        .send(response_event)
+                        .send(response)
                         .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
                 }
-                (_, _) => {
-                    error!("Failed to process downstream message");
+                (Some(result), None) => {
+                    error!("Result returned but no response tx: {:?}", result);
+                }
+                (None, Some(response_tx)) => {
+                    error!("Response expected not no result returned");
+                }
+                (None, None) => {
+                    // No response expected
                 }
             }
         }
