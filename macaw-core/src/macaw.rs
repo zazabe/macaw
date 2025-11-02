@@ -28,7 +28,7 @@ where
         }
     }
 
-    pub fn start(self) -> Macaw {
+    pub fn start(self) -> Macaw<Proc::Command> {
         let Self {
             executor,
             mut processor,
@@ -50,13 +50,13 @@ where
     }
 }
 
-pub struct Macaw {
+pub struct Macaw<Command> {
     task: Option<TokioTask>,
-    tx: mpsc::UnboundedSender<MacawCommand>,
+    tx: mpsc::UnboundedSender<MacawCommand<Command>>,
 }
 
-impl Macaw {
-    fn new(task: TokioTask, tx: mpsc::UnboundedSender<MacawCommand>) -> Self {
+impl<Command> Macaw<Command> {
+    fn new(task: TokioTask, tx: mpsc::UnboundedSender<MacawCommand<Command>>) -> Self {
         Self {
             task: Some(task),
             tx,
@@ -68,7 +68,9 @@ impl Macaw {
             task.cancel();
         }
     }
+}
 
+impl Macaw<RecordCommand> {
     pub async fn record(&mut self, path: PathBuf) -> Result<(), anyhow::Error> {
         let (tx, rx) = oneshot::channel();
         self.tx.send(MacawCommand::record(tx, path))?;
@@ -76,32 +78,34 @@ impl Macaw {
     }
 }
 
-impl Drop for Macaw {
+impl<Command> Drop for Macaw<Command> {
     fn drop(&mut self) {
         self.stop();
     }
 }
 
-pub struct MacawCommand {
-    pub(crate) kind: MacawCommandKind,
+pub struct MacawCommand<Command> {
+    pub(crate) kind: Command,
     pub(crate) reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
 }
 
-impl MacawCommand {
+pub enum RecordCommand {
+    Record(PathBuf),
+}
+
+impl MacawCommand<RecordCommand> {
     pub fn record(reply_tx: oneshot::Sender<Result<(), anyhow::Error>>, path: PathBuf) -> Self {
         Self {
-            kind: MacawCommandKind::Record(path),
+            kind: RecordCommand::Record(path),
             reply_tx,
         }
     }
 }
 
-pub(crate) enum MacawCommandKind {
-    Record(PathBuf),
-}
-
 #[async_trait::async_trait(?Send)]
 pub trait Processor {
+    type Command;
+
     fn add_proxy<P: Proxy>(
         &mut self,
         rx: mpsc::UnboundedReceiver<
@@ -115,6 +119,6 @@ pub trait Processor {
 
     async fn start(
         &mut self,
-        rx: mpsc::UnboundedReceiver<MacawCommand>,
+        rx: mpsc::UnboundedReceiver<MacawCommand<Self::Command>>,
     ) -> Result<(), anyhow::Error>;
 }

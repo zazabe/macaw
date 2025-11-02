@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::error;
 
 use crate::io::fs::EventStore;
-use crate::macaw::{MacawCommand, MacawCommandKind, Processor};
+use crate::macaw::{MacawCommand, Processor, RecordCommand};
 use crate::model::RecordEvent;
 use crate::processor::proxy::*;
 
@@ -45,7 +45,7 @@ impl Recorder {
 
     async fn handle_command(
         &mut self,
-        kind: MacawCommandKind,
+        kind: RecordCommand,
         reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
     ) -> Result<(), anyhow::Error> {
         let result = self.try_handle_command(kind).await;
@@ -55,9 +55,9 @@ impl Recorder {
         Ok(())
     }
 
-    async fn try_handle_command(&mut self, kind: MacawCommandKind) -> Result<(), anyhow::Error> {
+    async fn try_handle_command(&mut self, kind: RecordCommand) -> Result<(), anyhow::Error> {
         match kind {
-            MacawCommandKind::Record(path) => self.events.save_file(path)?,
+            RecordCommand::Record(path) => self.events.save_file(path)?,
         }
         Ok(())
     }
@@ -146,6 +146,8 @@ impl Default for Recorder {
 
 #[async_trait::async_trait(?Send)]
 impl Processor for Recorder {
+    type Command = RecordCommand;
+
     fn add_proxy<P: Proxy>(
         &mut self,
         rx: mpsc::UnboundedReceiver<
@@ -163,7 +165,7 @@ impl Processor for Recorder {
 
     async fn start(
         &mut self,
-        mut rx: mpsc::UnboundedReceiver<MacawCommand>,
+        mut rx: mpsc::UnboundedReceiver<MacawCommand<RecordCommand>>,
     ) -> Result<(), anyhow::Error> {
         loop {
             tokio::select! {
