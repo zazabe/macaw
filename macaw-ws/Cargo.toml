@@ -1,0 +1,28 @@
+[package]
+name = "macaw-ws"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "macaw_ws"
+path = "src/lib.rs"
+
+[[example]]
+name = "ws_proxy"
+path = "examples/ws_proxy.rs"
+
+[dependencies]
+macaw-core = { path = "../macaw-core" }
+anyhow.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+typetag.workspace = true
+http.workspace = true
+itertools.workspace = true

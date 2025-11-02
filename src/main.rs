@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
-use macaw::prelude::*;
+use macaw::core::*;
+use macaw::http::*;
 
 fn main() -> Result<(), anyhow::Error> {
     unsafe { std::env::set_var("RUST_LOG", "debug") };

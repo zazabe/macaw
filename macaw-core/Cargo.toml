@@ -1,0 +1,31 @@
+[package]
+name = "macaw-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "macaw_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+dyn-clone.workspace = true
+dyn-clonable.workspace = true
+hyper.workspace = true
+http.workspace = true
+itertools.workspace = true
+pin-project-lite.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+typetag.workspace = true
+uuid.workspace = true

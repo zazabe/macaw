@@ -1,0 +1,35 @@
+[package]
+name = "macaw-http"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "macaw_http"
+path = "src/lib.rs"
+
+[[example]]
+name = "http_proxy"
+path = "examples/http_proxy.rs"
+
+[dependencies]
+macaw-core = { path = "../macaw-core" }
+anyhow.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+dyn-clonable.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+hyper-rustls.workspace = true
+itertools.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+typetag.workspace = true
