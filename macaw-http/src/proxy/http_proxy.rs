@@ -8,6 +8,8 @@ use crate::io::http::server::{HttpRequestEnvelope, HttpServerRequestSender};
 use crate::io::http::{HttpClient, HttpServer};
 use crate::model::{HttpRequestEvent, HttpResponseEvent};
 
+type HttpMessage = Message<HttpRequestEvent, HttpResponseEvent, UnexpectedEvent>;
+
 #[derive(Debug)]
 pub(crate) struct HttpRecordProxy {
     id: ProxyId,
@@ -21,7 +23,7 @@ impl HttpRecordProxy {
         executor: Executor,
         addr: SocketAddr,
         target_url: TargetUrl,
-    ) -> Result<(mpsc::UnboundedReceiver<Message>, Self), anyhow::Error>
+    ) -> Result<(mpsc::UnboundedReceiver<HttpMessage>, Self), anyhow::Error>
     where
         Executor: TaskExecutor + Clone,
     {
@@ -43,7 +45,7 @@ impl HttpRecordProxy {
     }
 }
 
-impl HttpServerRequestSender for Sender {
+impl HttpServerRequestSender for Sender<HttpRequestEvent, HttpResponseEvent, UnexpectedEvent> {
     fn send(&self, envelope: HttpRequestEnvelope) -> Result<(), anyhow::Error> {
         let HttpRequestEnvelope {
             request,
@@ -53,7 +55,7 @@ impl HttpServerRequestSender for Sender {
         self.tx
             .send(Message::Downstream(DownstreamMessage {
                 proxy_id: self.id,
-                event: Box::new(request_event),
+                event: request_event,
                 response_tx: Some(response_tx),
             }))
             .map_err(|_| anyhow::anyhow!("Failed to send downstream message"))?;
@@ -63,30 +65,23 @@ impl HttpServerRequestSender for Sender {
 
 #[async_trait::async_trait(?Send)]
 impl Proxy for HttpRecordProxy {
+    type DownstreamInputMessage = HttpRequestEvent;
+    type DownstreamOutputMessage = HttpResponseEvent;
+    type UpstreamInputMessage = UnexpectedEvent;
+
     fn id(&self) -> ProxyId {
         self.id
     }
 
     async fn process_downstream_message(
         &self,
-        message: Box<dyn RecordEvent>,
-    ) -> Result<Option<Box<dyn RecordEvent>>, anyhow::Error> {
-        let mut request: Box<HttpRequestEvent> = message
-            .downcast::<HttpRequestEvent>()
-            .map_err(|_| anyhow::anyhow!("Failed to downcast message to HttpRequestEvent"))?;
-
+        mut request: HttpRequestEvent,
+    ) -> Result<Option<HttpResponseEvent>, anyhow::Error> {
         request.uri = self.target_url.apply(&request.uri)?;
         let req = request.to_request()?;
         let res = self.upstream.request(req).await?;
         let response = HttpResponseEvent::from_response(&res)?;
-        Ok(Some(Box::new(response)))
-    }
-
-    async fn process_upstream_message(
-        &self,
-        message: Box<dyn RecordEvent>,
-    ) -> Result<(), anyhow::Error> {
-        Ok(())
+        Ok(Some(response))
     }
 }
 

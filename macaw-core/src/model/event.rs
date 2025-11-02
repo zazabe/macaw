@@ -11,7 +11,7 @@ use crate::processor::proxy::ProxyId;
 
 #[dyn_clonable::clonable]
 #[typetag::serde(tag = "type")]
-pub trait RecordEvent: Any + fmt::Debug + Clone {}
+pub trait RecordEvent: Any + fmt::Debug + Clone + 'static {}
 
 impl dyn RecordEvent {
     pub fn downcast<T: RecordEvent + 'static>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
@@ -32,6 +32,12 @@ impl dyn RecordEvent {
         self
     }
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct UnexpectedEvent;
+
+#[typetag::serde]
+impl RecordEvent for UnexpectedEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RecordHeader {

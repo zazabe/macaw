@@ -15,7 +15,7 @@ use macaw_core::prelude::*;
 
 pub(crate) struct HttpRequestEnvelope {
     pub(crate) request: HttpRequest,
-    pub(crate) response_tx: oneshot::Sender<Box<dyn RecordEvent>>,
+    pub(crate) response_tx: oneshot::Sender<HttpResponseEvent>,
 }
 
 #[dyn_clonable::clonable]
@@ -106,20 +106,17 @@ impl Service<http::Request<Incoming>> for Handler {
             let (parts, body) = req.into_parts();
             let bytes = body.collect().await?.to_bytes();
             let rebuilt_req = http::Request::from_parts(parts, BodyBytes::new(bytes));
-            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
             let env = HttpRequestEnvelope {
                 request: rebuilt_req,
-                response_tx: resp_tx,
+                response_tx,
             };
             sender
                 .send(env)
                 .map_err(|_| anyhow::anyhow!("Request channel closed"))?;
-            let resp = resp_rx
+            let response = response_rx
                 .await
                 .map_err(|_| anyhow::anyhow!("oneshot cancelled"))?;
-            let response = resp
-                .downcast::<HttpResponseEvent>()
-                .map_err(|_| anyhow::anyhow!("Failed to downcast response to HttpResponseEvent"))?;
             response.to_response()
         })
     }

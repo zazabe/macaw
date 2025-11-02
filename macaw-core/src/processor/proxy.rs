@@ -24,31 +24,37 @@ impl ProxyId {
 
 #[async_trait::async_trait(?Send)]
 pub trait Proxy: fmt::Debug + 'static {
+    type DownstreamInputMessage: RecordEvent;
+    type DownstreamOutputMessage: RecordEvent;
+    type UpstreamInputMessage: RecordEvent;
+
     fn id(&self) -> ProxyId;
 
     async fn redact_downstream_message(
         &self,
-        message: Box<dyn RecordEvent>,
-    ) -> Result<Box<dyn RecordEvent>, anyhow::Error> {
+        message: Self::DownstreamInputMessage,
+    ) -> Result<Self::DownstreamInputMessage, anyhow::Error> {
         Ok(message)
     }
 
     async fn process_downstream_message(
         &self,
-        message: Box<dyn RecordEvent>,
-    ) -> Result<Option<Box<dyn RecordEvent>>, anyhow::Error>;
+        message: Self::DownstreamInputMessage,
+    ) -> Result<Option<Self::DownstreamOutputMessage>, anyhow::Error>;
 
     async fn redact_upstream_message(
         &self,
-        message: Box<dyn RecordEvent>,
-    ) -> Result<Box<dyn RecordEvent>, anyhow::Error> {
+        message: Self::UpstreamInputMessage,
+    ) -> Result<Self::UpstreamInputMessage, anyhow::Error> {
         Ok(message)
     }
 
     async fn process_upstream_message(
         &self,
-        message: Box<dyn RecordEvent>,
-    ) -> Result<(), anyhow::Error>;
+        message: Self::UpstreamInputMessage,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow::anyhow!("Unexpected upstream message"))
+    }
 }
 
 pub(crate) trait ProxyStream: Stream<Item = ()> + 'static {}
@@ -126,15 +132,15 @@ impl TryFrom<http::Uri> for TargetUrl {
 }
 
 #[derive(Debug, Clone)]
-pub struct Sender {
+pub struct Sender<DIN: RecordEvent, DOUT: RecordEvent, UIN: RecordEvent> {
     pub id: ProxyId,
-    pub tx: tokio::sync::mpsc::UnboundedSender<crate::processor::Message>,
+    pub tx: tokio::sync::mpsc::UnboundedSender<crate::processor::Message<DIN, DOUT, UIN>>,
 }
 
-impl Sender {
+impl<DIN: RecordEvent, DOUT: RecordEvent, UIN: RecordEvent> Sender<DIN, DOUT, UIN> {
     pub fn new(
         id: ProxyId,
-        tx: tokio::sync::mpsc::UnboundedSender<crate::processor::Message>,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::processor::Message<DIN, DOUT, UIN>>,
     ) -> Self {
         Self { id, tx }
     }

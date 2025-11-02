@@ -1,4 +1,5 @@
 use crate::{
+    model::RecordEvent,
     processor::{Message, proxy::Proxy},
     support::{TaskExecutor, TokioTask},
 };
@@ -101,7 +102,16 @@ pub(crate) enum MacawCommandKind {
 
 #[async_trait::async_trait(?Send)]
 pub trait Processor {
-    fn add_proxy<P: Proxy + 'static>(&mut self, rx: mpsc::UnboundedReceiver<Message>, proxy: P);
+    fn add_proxy<P: Proxy>(
+        &mut self,
+        rx: mpsc::UnboundedReceiver<
+            Message<P::DownstreamInputMessage, P::DownstreamOutputMessage, P::UpstreamInputMessage>,
+        >,
+        proxy: P,
+    ) where
+        P::DownstreamInputMessage: RecordEvent + Clone,
+        P::DownstreamOutputMessage: RecordEvent + Clone,
+        P::UpstreamInputMessage: RecordEvent + Clone;
 
     async fn start(
         &mut self,

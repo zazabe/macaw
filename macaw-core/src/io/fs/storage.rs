@@ -47,7 +47,7 @@ impl EventStore {
         Ok(())
     }
 
-    pub(crate) fn push(&self, id: ProxyId, event: Box<dyn RecordEvent>) {
+    pub(crate) fn push<E: RecordEvent>(&self, id: ProxyId, event: E) {
         self.inner.borrow_mut().push(id, event);
     }
 }
@@ -105,8 +105,8 @@ impl EventStoreInner {
         Ok(())
     }
 
-    fn push(&mut self, id: ProxyId, event: Box<dyn RecordEvent>) {
-        self.events.push(Event::new(id, event));
+    fn push<E: RecordEvent>(&mut self, id: ProxyId, event: E) {
+        self.events.push(Event::new(id, Box::new(event)));
     }
 
     fn header(&self) -> &RecordHeader {

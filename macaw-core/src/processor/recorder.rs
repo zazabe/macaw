@@ -9,20 +9,24 @@ use crate::macaw::{MacawCommand, MacawCommandKind, Processor};
 use crate::model::RecordEvent;
 use crate::processor::proxy::*;
 
-pub enum Message {
-    Downstream(DownstreamMessage),
-    Upstream(UpstreamMessage),
+pub enum Message<
+    DownstreamInput: RecordEvent,
+    DownstreamOutput: RecordEvent,
+    UpstreamInput: RecordEvent,
+> {
+    Downstream(DownstreamMessage<DownstreamInput, DownstreamOutput>),
+    Upstream(UpstreamMessage<UpstreamInput>),
 }
 
-pub struct DownstreamMessage {
+pub struct DownstreamMessage<Input: RecordEvent, Output: RecordEvent> {
     pub proxy_id: ProxyId,
-    pub event: Box<dyn RecordEvent>,
-    pub response_tx: Option<oneshot::Sender<Box<dyn RecordEvent>>>,
+    pub event: Input,
+    pub response_tx: Option<oneshot::Sender<Output>>,
 }
 
-pub struct UpstreamMessage {
+pub struct UpstreamMessage<Input: RecordEvent> {
     pub(crate) proxy_id: ProxyId,
-    pub(crate) event: Box<dyn RecordEvent>,
+    pub(crate) event: Input,
 }
 
 #[derive(Debug)]
@@ -58,11 +62,19 @@ impl Recorder {
         Ok(())
     }
 
-    fn handle_proxy_message<P: Proxy + 'static>(
+    fn handle_proxy_message<P>(
         &self,
-        mut rx: mpsc::UnboundedReceiver<Message>,
+        mut rx: mpsc::UnboundedReceiver<
+            Message<P::DownstreamInputMessage, P::DownstreamOutputMessage, P::UpstreamInputMessage>,
+        >,
         proxy: P,
-    ) -> BoxedProxyStream {
+    ) -> BoxedProxyStream
+    where
+        P: Proxy,
+        P::DownstreamInputMessage: RecordEvent + Clone,
+        P::DownstreamOutputMessage: RecordEvent + Clone,
+        P::UpstreamInputMessage: RecordEvent + Clone,
+    {
         let events = self.events.clone();
         Box::pin(stream! {
             while let Some(message) = rx.recv().await {
@@ -80,11 +92,20 @@ impl Recorder {
     }
 }
 
-async fn process_proxy_message(
+async fn process_proxy_message<DIN, DOUT, UIN>(
     events: EventStore,
-    message: Message,
-    proxy: &dyn Proxy,
-) -> Result<(), anyhow::Error> {
+    message: Message<DIN, DOUT, UIN>,
+    proxy: &dyn Proxy<
+        DownstreamInputMessage = DIN,
+        DownstreamOutputMessage = DOUT,
+        UpstreamInputMessage = UIN,
+    >,
+) -> Result<(), anyhow::Error>
+where
+    DIN: RecordEvent + Clone,
+    DOUT: RecordEvent + Clone,
+    UIN: RecordEvent + Clone,
+{
     match message {
         Message::Downstream(message) => {
             let request_event = proxy.redact_downstream_message(message.event).await?;
@@ -119,7 +140,17 @@ impl Default for Recorder {
 
 #[async_trait::async_trait(?Send)]
 impl Processor for Recorder {
-    fn add_proxy<P: Proxy + 'static>(&mut self, rx: mpsc::UnboundedReceiver<Message>, proxy: P) {
+    fn add_proxy<P: Proxy>(
+        &mut self,
+        rx: mpsc::UnboundedReceiver<
+            Message<P::DownstreamInputMessage, P::DownstreamOutputMessage, P::UpstreamInputMessage>,
+        >,
+        proxy: P,
+    ) where
+        P::DownstreamInputMessage: RecordEvent + Clone,
+        P::DownstreamOutputMessage: RecordEvent + Clone,
+        P::UpstreamInputMessage: RecordEvent + Clone,
+    {
         let proxy_stream = self.handle_proxy_message(rx, proxy);
         self.proxies.add_proxy(proxy_stream);
     }
