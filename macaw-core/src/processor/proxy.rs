@@ -1,48 +1,117 @@
+use arrayvec::ArrayString;
+
 use crate::lib::*;
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum ProxyId {
     Uuid(Uuid),
+    Named(ArrayString<64>),
 }
 
 impl ProxyId {
     pub fn uuid() -> Self {
         Self::Uuid(Uuid::new_v4())
     }
+
+    pub fn named(name: &str) -> Result<Self, anyhow::Error> {
+        Ok(Self::Named(ArrayString::from_str(name)?))
+    }
+}
+
+impl FromStr for ProxyId {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::named(s)
+    }
+}
+
+pub trait Proxy
+where
+    Self: ProxyDownstream + ProxyUpstream + ProxyHandler + Clone + fmt::Debug + 'static,
+    <Self as ProxyDownstream>::IncomingMessage: RecordEvent,
+    <Self as ProxyDownstream>::OutgoingMessage: RecordEvent,
+    <Self as ProxyUpstream>::IncomingMessage: RecordEvent,
+    <Self as ProxyHandler>::Message: RecordEventUntagged,
+{
+    fn id(&self) -> ProxyId;
 }
 
 #[async_trait::async_trait(?Send)]
-pub trait Proxy: fmt::Debug + 'static {
-    type DownstreamInputMessage: RecordEvent;
-    type DownstreamOutputMessage: RecordEvent;
-    type UpstreamInputMessage: RecordEvent;
+pub trait ProxyDownstream {
+    type IncomingMessage: RecordEvent;
+    type OutgoingMessage: RecordEvent;
 
-    fn id(&self) -> ProxyId;
-
-    async fn redact_downstream_message(
+    async fn downstream_incoming_redact(
         &self,
-        message: Self::DownstreamInputMessage,
-    ) -> Result<Self::DownstreamInputMessage, anyhow::Error> {
+        message: Self::IncomingMessage,
+    ) -> Result<Self::IncomingMessage, anyhow::Error> {
         Ok(message)
     }
 
-    async fn process_downstream_message(
+    async fn downstream_incoming_process(
         &self,
-        message: Self::DownstreamInputMessage,
-    ) -> Result<Option<Self::DownstreamOutputMessage>, anyhow::Error>;
-
-    async fn redact_upstream_message(
-        &self,
-        message: Self::UpstreamInputMessage,
-    ) -> Result<Self::UpstreamInputMessage, anyhow::Error> {
-        Ok(message)
+        message: Self::IncomingMessage,
+    ) -> Result<Option<Self::OutgoingMessage>, anyhow::Error> {
+        Ok(None)
     }
 
-    async fn process_upstream_message(
+    async fn downstream_outgoing_redact(
         &self,
-        message: Self::UpstreamInputMessage,
+        message: Self::OutgoingMessage,
+    ) -> Result<Self::OutgoingMessage, anyhow::Error> {
+        Ok(message)
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+pub trait ProxyUpstream {
+    type IncomingMessage: RecordEvent;
+
+    async fn upstream_incoming_redact(
+        &self,
+        message: Self::IncomingMessage,
+    ) -> Result<Self::IncomingMessage, anyhow::Error> {
+        Err(anyhow::anyhow!("Unexpected upstream message"))
+    }
+
+    async fn upstream_incoming_prepare(
+        &self,
+        message: Self::IncomingMessage,
+    ) -> Result<Self::IncomingMessage, anyhow::Error> {
+        Err(anyhow::anyhow!("Unexpected upstream message"))
+    }
+
+    async fn upstream_incoming_process(
+        &self,
+        message: Self::IncomingMessage,
     ) -> Result<(), anyhow::Error> {
         Err(anyhow::anyhow!("Unexpected upstream message"))
+    }
+}
+
+/// Forwards RecordEvents to downstream connection.
+#[async_trait::async_trait(?Send)]
+pub trait ProxyHandler {
+    type Message: RecordEventUntagged;
+
+    async fn handle_message(&self, message: Self::Message) -> Result<(), anyhow::Error> {
+        Err(anyhow::anyhow!("Unexpected incoming message"))
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+pub trait ProxyMessageHandler {
+    async fn handle(&self, message: Box<dyn RecordEvent>) -> Result<(), anyhow::Error>;
+}
+
+#[async_trait::async_trait(?Send)]
+impl<T> ProxyMessageHandler for T
+where
+    T: Fn(Box<dyn RecordEvent>) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>
+        + 'static,
+{
+    async fn handle(&self, message: Box<dyn RecordEvent>) -> Result<(), anyhow::Error> {
+        (self)(message).await
     }
 }
 
@@ -53,18 +122,36 @@ impl<T> ProxyStream for T where T: Stream<Item = ()> + 'static {}
 pub(crate) type BoxedProxyStream = Pin<Box<dyn ProxyStream>>;
 
 pub(crate) struct Proxies {
-    proxies: stream::SelectAll<BoxedProxyStream>,
+    rx: stream::SelectAll<BoxedProxyStream>,
+    handlers: HashMap<ProxyId, Box<dyn ProxyMessageHandler>>,
 }
 
 impl Proxies {
     pub(crate) fn default() -> Self {
         Self {
-            proxies: stream::SelectAll::new(),
+            rx: stream::SelectAll::new(),
+            handlers: HashMap::new(),
         }
     }
 
-    pub(crate) fn add_proxy(&mut self, stream: BoxedProxyStream) {
-        self.proxies.push(stream);
+    pub(crate) fn add_proxy<S: ProxyMessageHandler + 'static>(
+        &mut self,
+        id: ProxyId,
+        handler: S,
+        stream: BoxedProxyStream,
+    ) {
+        self.handlers.insert(id, Box::new(handler));
+        self.rx.push(stream);
+    }
+
+    pub(crate) fn get_handler(
+        &self,
+        id: ProxyId,
+    ) -> Result<&dyn ProxyMessageHandler, anyhow::Error> {
+        self.handlers
+            .get(&id)
+            .map(|b| b.as_ref())
+            .ok_or(anyhow::anyhow!("Proxy {:?} not found", id))
     }
 }
 
@@ -77,8 +164,37 @@ impl fmt::Debug for Proxies {
 impl Stream for Proxies {
     type Item = ();
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.get_mut().proxies).poll_next(cx)
+        Pin::new(&mut self.get_mut().rx).poll_next(cx)
     }
+}
+
+#[derive(Debug)]
+pub enum Message<
+    DownstreamInput: RecordEvent,
+    DownstreamOutput: RecordEvent,
+    UpstreamInput: RecordEvent,
+> {
+    Downstream(DownstreamMessage<DownstreamInput, DownstreamOutput>),
+    Upstream(UpstreamMessage<UpstreamInput>),
+}
+
+#[derive(Debug)]
+pub struct DownstreamMessage<Input: RecordEvent, Output: RecordEvent> {
+    pub proxy_id: ProxyId,
+    pub event: Input,
+    pub response_tx: Option<oneshot::Sender<Output>>,
+}
+
+#[derive(Debug)]
+pub struct UpstreamMessage<Input: RecordEvent> {
+    pub(crate) proxy_id: ProxyId,
+    pub(crate) event: Input,
+}
+
+pub struct Record<M> {
+    pub proxy_id: ProxyId,
+    pub event: M,
+    pub reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
 }
 
 #[derive(Debug, Clone)]

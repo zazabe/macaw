@@ -45,10 +45,18 @@ impl EventStore {
     }
 }
 
+impl Iterator for EventStore {
+    type Item = Event<Box<dyn RecordEvent>>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.borrow_mut().next()
+    }
+}
+
 #[derive(Debug)]
 struct EventStoreInner {
     header: RecordHeader,
     events: Vec<Event<Box<dyn RecordEvent>>>,
+    index: usize,
 }
 
 impl EventStoreInner {
@@ -56,6 +64,7 @@ impl EventStoreInner {
         Self {
             header: RecordHeader::new(),
             events: Vec::new(),
+            index: 0,
         }
     }
 
@@ -75,6 +84,7 @@ impl EventStoreInner {
         Ok(Self {
             header: rf.header,
             events: rf.events,
+            index: 0,
         })
     }
 
@@ -102,7 +112,12 @@ impl EventStoreInner {
         self.events.push(Event::new(id, Box::new(event)));
     }
 
-    fn header(&self) -> &RecordHeader {
-        &self.header
+    fn next(&mut self) -> Option<Event<Box<dyn RecordEvent>>> {
+        if self.index >= self.events.len() {
+            return None;
+        }
+        let event = self.events[self.index].clone();
+        self.index += 1;
+        Some(event)
     }
 }

@@ -27,7 +27,7 @@ where
             mut processor,
         } = self;
         let (tx, rx) = mpsc::unbounded_channel();
-        let task = executor.execute(Box::pin(async move {
+        let task = executor.spawn(Box::pin(async move {
             processor.start(rx).await?;
             Ok(())
         }));
@@ -95,17 +95,6 @@ impl<Command: ProcessorCommand> MacawCommand<Command> {
 #[async_trait::async_trait(?Send)]
 pub trait Processor {
     type Command: ProcessorCommand;
-
-    fn add_proxy<P: Proxy>(
-        &mut self,
-        rx: mpsc::UnboundedReceiver<
-            Message<P::DownstreamInputMessage, P::DownstreamOutputMessage, P::UpstreamInputMessage>,
-        >,
-        proxy: P,
-    ) where
-        P::DownstreamInputMessage: RecordEvent + Clone,
-        P::DownstreamOutputMessage: RecordEvent + Clone,
-        P::UpstreamInputMessage: RecordEvent + Clone;
 
     async fn start(
         &mut self,

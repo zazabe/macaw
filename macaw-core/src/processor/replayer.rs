@@ -1,22 +1,22 @@
 use crate::lib::*;
 
 #[derive(Debug)]
-pub struct Recorder {
+pub struct Replayer {
     pub(crate) events: EventStore,
     pub(crate) proxies: Proxies,
 }
 
-impl Recorder {
-    pub fn new() -> Self {
-        Self {
+impl Replayer {
+    pub fn new(path: PathBuf) -> Result<Self, anyhow::Error> {
+        Ok(Self {
+            events: EventStore::from_file(path)?,
             proxies: Proxies::default(),
-            events: EventStore::new(),
-        }
+        })
     }
 
     async fn handle_command(
         &mut self,
-        kind: RecorderCommand,
+        kind: ReplayerCommand,
         reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
     ) -> Result<(), anyhow::Error> {
         let result = self.try_handle_command(kind).await;
@@ -26,9 +26,18 @@ impl Recorder {
         Ok(())
     }
 
-    async fn try_handle_command(&mut self, kind: RecorderCommand) -> Result<(), anyhow::Error> {
+    async fn try_handle_command(&mut self, kind: ReplayerCommand) -> Result<(), anyhow::Error> {
         match kind {
-            RecorderCommand::Record(path) => self.events.save_file(path)?,
+            ReplayerCommand::Play => self.play().await,
+        }
+    }
+
+    async fn play(&mut self) -> Result<(), anyhow::Error> {
+        let events = self.events.clone();
+        for event in events {
+            let Event { proxy_id, data, .. } = event;
+            let handler = self.proxies.get_handler(proxy_id)?;
+            handler.handle(data).await?;
         }
         Ok(())
     }
@@ -79,14 +88,14 @@ where
     DOUT: RecordEvent + Clone,
     UIN: RecordEvent + Clone,
 {
+    debug!("Proxy message: {:?}", message);
+
     match message {
         Message::Downstream(message) => {
             let request = proxy.downstream_incoming_redact(message.event).await?;
-            events.push(message.proxy_id, request.clone());
             let result = proxy.downstream_incoming_process(request).await?;
             match (result, message.response_tx) {
                 (Some(response), Some(response_tx)) => {
-                    events.push(message.proxy_id, response.clone());
                     response_tx
                         .send(response)
                         .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
@@ -110,20 +119,12 @@ where
     }
     Ok(())
 }
-
-impl Default for Recorder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[async_trait::async_trait(?Send)]
-impl Processor for Recorder {
-    type Command = RecorderCommand;
-
+impl Processor for Replayer {
+    type Command = ReplayerCommand;
     async fn start(
         &mut self,
-        mut rx: mpsc::UnboundedReceiver<MacawCommand<RecorderCommand>>,
+        mut rx: mpsc::UnboundedReceiver<MacawCommand<ReplayerCommand>>,
     ) -> Result<(), anyhow::Error> {
         loop {
             tokio::select! {
@@ -140,8 +141,8 @@ impl Processor for Recorder {
     }
 }
 
-impl Recorder {
-    pub fn add_proxy<P: Proxy>(
+impl Replayer {
+    pub fn add_proxy<P>(
         &mut self,
         rx: mpsc::UnboundedReceiver<
             Message<
@@ -152,30 +153,36 @@ impl Recorder {
         >,
         proxy: P,
     ) where
+        P: Proxy + Clone,
         <P as ProxyDownstream>::IncomingMessage: RecordEvent + Clone,
         <P as ProxyDownstream>::OutgoingMessage: RecordEvent + Clone,
         <P as ProxyUpstream>::IncomingMessage: RecordEvent + Clone,
+        <P as ProxyHandler>::Message: RecordEventUntagged,
     {
         let proxy_id = proxy.id();
-        let proxy_stream = self.handle_proxy_message(rx, proxy);
-        let proxy_sender = |_| -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>> {
-            Box::pin(futures::future::err(anyhow::anyhow!(
-                "Proxy in recording mode are not expected to forward synthetic messages"
-            )))
+        let proxy_stream = self.handle_proxy_message(rx, proxy.clone());
+        let proxy_sender = move |message: Box<dyn RecordEvent>|  -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>> {
+            let proxy = proxy.clone();
+            Box::pin(async move {
+                let downstream_message = <P as ProxyHandler>::Message::downcast(message)
+                    .map_err(|e| anyhow::anyhow!("Failed to downcast message: {:?}", e))?;
+                proxy.handle_message(downstream_message).await?;
+                Ok(())
+            })
         };
         self.proxies.add_proxy(proxy_id, proxy_sender, proxy_stream);
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum RecorderCommand {
-    Record(PathBuf),
+pub enum ReplayerCommand {
+    Play,
 }
 
-impl ProcessorCommand for RecorderCommand {}
+impl ProcessorCommand for ReplayerCommand {}
 
-impl Macaw<RecorderCommand> {
-    pub async fn record(&mut self, path: PathBuf) -> Result<(), anyhow::Error> {
-        self.send_command(RecorderCommand::Record(path)).await
+impl Macaw<ReplayerCommand> {
+    pub async fn play(&mut self) -> Result<(), anyhow::Error> {
+        self.send_command(ReplayerCommand::Play).await
     }
 }

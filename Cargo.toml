@@ -8,6 +8,7 @@ edition = "2024"
 
 [workspace.dependencies]
 anyhow = "1"
+arrayvec = { version = "0.7", features = [ "serde" ] }
 async-trait = "0.1.85"
 async-stream = "0.3.5"
 base64 = "0.22"
@@ -57,9 +58,13 @@ edition.workspace = true
 name = "macaw"
 path = "lib/lib.rs"
 
-[[bin]]
-name = "macaw"
-path = "src/main.rs"
+[[example]]
+name = "recorder"
+path = "examples/recorder.rs"
+
+[[example]]
+name = "replayer"
+path = "examples/replayer.rs"
 
 [dependencies]
 macaw-core = { path = "macaw-core" }

@@ -1,12 +1,4 @@
-#![allow(dead_code)]
-//! Various runtimes for hyper
-use core::fmt;
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-    time::{Duration, Instant},
-};
+use crate::lib::*;
 
 use hyper::rt::{Sleep, Timer};
 use pin_project_lite::pin_project;
@@ -20,6 +12,10 @@ impl TokioTask {
     pub fn cancel(&self) {
         self.handle.abort();
     }
+
+    pub async fn join(self) -> Result<(), anyhow::Error> {
+        self.handle.await?
+    }
 }
 
 pub trait TaskExecutor<
@@ -27,7 +23,7 @@ pub trait TaskExecutor<
 > where
     Self: Send + Sync + Clone + 'static,
 {
-    fn execute(&self, fut: Fut) -> TokioTask;
+    fn spawn(&self, fut: Fut) -> TokioTask;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -37,7 +33,7 @@ impl<Fut> TaskExecutor<Fut> for LocalTokioExecutor
 where
     Fut: Future<Output = Result<(), anyhow::Error>> + 'static,
 {
-    fn execute(&self, fut: Fut) -> TokioTask {
+    fn spawn(&self, fut: Fut) -> TokioTask {
         let handle = tokio::task::spawn_local(fut);
         TokioTask { handle }
     }
@@ -61,7 +57,7 @@ where
     Fut: Future<Output = Result<(), anyhow::Error>> + Send + 'static,
     Fut::Output: Send + 'static,
 {
-    fn execute(&self, fut: Fut) -> TokioTask {
+    fn spawn(&self, fut: Fut) -> TokioTask {
         let handle = tokio::task::spawn(fut);
         TokioTask { handle }
     }

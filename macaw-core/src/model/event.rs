@@ -26,11 +26,23 @@ impl dyn RecordEvent {
     }
 }
 
+pub trait RecordEventUntagged {
+    fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, Box<dyn RecordEvent>>
+    where
+        Self: Sized;
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct UnexpectedEvent;
 
 #[typetag::serde]
 impl RecordEvent for UnexpectedEvent {}
+
+impl RecordEventUntagged for UnexpectedEvent {
+    fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, Box<dyn RecordEvent>> {
+        Err(event)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RecordHeader {
@@ -51,9 +63,9 @@ impl RecordHeader {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Event<D> {
-    proxy_id: ProxyId,
-    timestamp: DateTime<Utc>,
-    data: D,
+    pub(crate) proxy_id: ProxyId,
+    pub(crate) timestamp: DateTime<Utc>,
+    pub(crate) data: D,
 }
 
 impl<D> Event<D> {
@@ -63,6 +75,14 @@ impl<D> Event<D> {
             timestamp: Utc::now(),
             data,
         }
+    }
+}
+
+impl Event<Box<dyn RecordEvent>> {
+    pub(crate) fn downcast_data<T: RecordEvent + 'static>(
+        self,
+    ) -> Result<Box<T>, Box<dyn RecordEvent>> {
+        self.data.downcast::<T>()
     }
 }
 

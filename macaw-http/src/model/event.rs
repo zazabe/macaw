@@ -1,18 +1,29 @@
-use std::fmt;
+use crate::lib::*;
 
-use http;
-use itertools::Itertools;
-use serde::{Deserialize, Serialize};
+#[derive(Debug, Clone)]
+pub(crate) enum HttpEvent {
+    HttpRequest(HttpRequestEvent),
+    HttpResponse(HttpResponseEvent),
+}
 
-use crate::io::http::{BodyBytes, HttpRequest, HttpResponse};
-use crate::parsing::http::{
-    http_method_serde, http_status_serde, http_uri_serde, http_version_serde,
-};
-use bytes::Bytes;
-use macaw_core::prelude::*;
+impl RecordEventUntagged for HttpEvent {
+    fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, Box<dyn RecordEvent>>
+    where
+        Self: Sized,
+    {
+        match event.downcast::<HttpRequestEvent>() {
+            Ok(request) => Ok(HttpEvent::HttpRequest(*request)),
+            Err(event) => match event.downcast::<HttpResponseEvent>() {
+                Ok(response) => Ok(HttpEvent::HttpResponse(*response)),
+                Err(event) => Err(event),
+            },
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpRequestEvent {
+pub(crate) struct HttpRequestEvent {
+    pub(crate) request_id: Uuid,
     #[serde(with = "http_method_serde")]
     pub(crate) method: http::Method,
     #[serde(with = "http_uri_serde")]
@@ -26,6 +37,7 @@ pub struct HttpRequestEvent {
 impl HttpRequestEvent {
     pub(crate) fn from_request(req: &HttpRequest) -> Result<Self, anyhow::Error> {
         Ok(Self {
+            request_id: Uuid::new_v4(),
             method: req.method().clone(),
             uri: req.uri().clone(),
             version: req.version(),
@@ -58,13 +70,21 @@ impl HttpRequestEvent {
 
         Ok(builder.body(body)?)
     }
+
+    pub(crate) fn matches(&self, other: &HttpRequestEvent) -> bool {
+        self.method == other.method
+            && self.uri == other.uri
+            && self.version == other.version
+            && self.headers == other.headers
+    }
 }
 
 #[typetag::serde]
 impl RecordEvent for HttpRequestEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpResponseEvent {
+pub(crate) struct HttpResponseEvent {
+    pub(crate) request_id: Uuid,
     #[serde(with = "http_status_serde")]
     pub(crate) status: http::StatusCode,
     #[serde(with = "http_version_serde")]
@@ -74,8 +94,12 @@ pub struct HttpResponseEvent {
 }
 
 impl HttpResponseEvent {
-    pub(crate) fn from_response(res: &HttpResponse) -> Result<Self, anyhow::Error> {
+    pub(crate) fn from_response(
+        res: &HttpResponse,
+        request_id: Uuid,
+    ) -> Result<Self, anyhow::Error> {
         Ok(Self {
+            request_id,
             status: res.status(),
             version: res.version(),
             headers: res

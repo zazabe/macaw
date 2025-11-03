@@ -14,7 +14,7 @@ fn main() -> Result<(), anyhow::Error> {
     local.block_on(&rt, async {
         let mut setup = MacawSetup::new(LocalTokioExecutor, Recorder::new());
         setup
-            .add_http_proxy("127.0.0.1:8800".parse()?, "https://www.perdu.com/".parse()?)
+            .add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
             .await?;
         let mut macaw = setup.start();
 

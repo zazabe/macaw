@@ -1,15 +1,10 @@
-use std::fmt;
-use std::future::Future;
-use std::net::SocketAddr;
-
 use http_body_util::BodyExt;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use rustls_platform_verifier::ConfigVerifierExt;
 
-use crate::io::http::{BodyBytes, HttpRequest, HttpResponse};
-use macaw_core::prelude::*;
+use crate::lib::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct HttpClient {
     client: Client<hyper_rustls::HttpsConnector<HttpConnector>, BodyBytes>,
 }
@@ -84,7 +79,7 @@ where
     Fut: Future<Output = ()> + 'static,
 {
     fn execute(&self, fut: Fut) {
-        self.executor.execute(Box::pin(async move {
+        self.executor.spawn(Box::pin(async move {
             fut.await;
             Ok(())
         }));

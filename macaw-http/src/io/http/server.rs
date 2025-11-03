@@ -1,17 +1,9 @@
-use std::fmt;
-use std::net::SocketAddr;
-
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::Service;
-use tokio::net::TcpListener;
-use tokio::sync::oneshot;
-use tracing::info;
 
-use crate::io::http::{BodyBytes, HttpRequest, HttpResponse};
-use crate::model::HttpResponseEvent;
-use macaw_core::prelude::*;
+use crate::lib::*;
 
 pub(crate) struct HttpRequestEnvelope {
     pub(crate) request: HttpRequest,
@@ -60,7 +52,7 @@ impl HttpServer {
         info!("Listening on http://{}", local_addr);
         self.local_addr = Some(local_addr);
 
-        let task = executor.clone().execute(Box::pin({
+        let task = executor.clone().spawn(Box::pin({
             let exec = executor.clone();
             let sender = self.tx.clone();
             async move {
@@ -70,7 +62,7 @@ impl HttpServer {
                     let handler = Handler {
                         sender: sender.clone(),
                     };
-                    exec.execute(Box::pin(async move {
+                    exec.spawn(Box::pin(async move {
                         http1::Builder::new().serve_connection(io, handler).await?;
                         Ok(())
                     }));
@@ -105,10 +97,11 @@ impl Service<http::Request<Incoming>> for Handler {
         Box::pin(async move {
             let (parts, body) = req.into_parts();
             let bytes = body.collect().await?.to_bytes();
-            let rebuilt_req = http::Request::from_parts(parts, BodyBytes::new(bytes));
+            let request = http::Request::from_parts(parts, BodyBytes::new(bytes));
+            debug!("Received request: {:?}", request);
             let (response_tx, response_rx) = tokio::sync::oneshot::channel();
             let env = HttpRequestEnvelope {
-                request: rebuilt_req,
+                request,
                 response_tx,
             };
             sender
