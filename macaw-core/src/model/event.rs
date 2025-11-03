@@ -2,6 +2,7 @@ use crate::lib::*;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use std::any::Any;
 
+/// Trait to support ser/de for generic RecordEvent, allowing to record and replay generic events.
 #[dyn_clonable::clonable]
 #[typetag::serde(tag = "type")]
 pub trait RecordEvent: Any + fmt::Debug + Clone + 'static {}
@@ -26,12 +27,14 @@ impl dyn RecordEvent {
     }
 }
 
+/// Trait for downcasting a RecordEvent to different variants of types using typetag, useful to produce a type owning multiple types of events.
 pub trait RecordEventUntagged {
     fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, Box<dyn RecordEvent>>
     where
         Self: Sized;
 }
 
+/// Used to implement traits not supported by some proxy, when the event is not expected.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct UnexpectedEvent;
 

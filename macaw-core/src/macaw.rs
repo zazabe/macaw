@@ -24,7 +24,7 @@ where
     pub fn start(self) -> Macaw<Proc::Command> {
         let Self {
             executor,
-            mut processor,
+            processor,
         } = self;
         let (tx, rx) = mpsc::unbounded_channel();
         let task = executor.spawn(Box::pin(async move {
@@ -97,7 +97,7 @@ pub trait Processor {
     type Command: ProcessorCommand;
 
     async fn start(
-        &mut self,
+        self,
         rx: mpsc::UnboundedReceiver<MacawCommand<Self::Command>>,
     ) -> Result<(), anyhow::Error>;
 }

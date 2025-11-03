@@ -122,15 +122,15 @@ impl<T> ProxyStream for T where T: Stream<Item = ()> + 'static {}
 pub(crate) type BoxedProxyStream = Pin<Box<dyn ProxyStream>>;
 
 pub(crate) struct Proxies {
-    rx: stream::SelectAll<BoxedProxyStream>,
-    handlers: HashMap<ProxyId, Box<dyn ProxyMessageHandler>>,
+    pub(crate) receivers: stream::SelectAll<BoxedProxyStream>,
+    pub(crate) handlers: ProxyHandlers,
 }
 
 impl Proxies {
     pub(crate) fn default() -> Self {
         Self {
-            rx: stream::SelectAll::new(),
-            handlers: HashMap::new(),
+            receivers: stream::SelectAll::new(),
+            handlers: ProxyHandlers::new(),
         }
     }
 
@@ -140,8 +140,29 @@ impl Proxies {
         handler: S,
         stream: BoxedProxyStream,
     ) {
+        self.handlers.add_handler(id, handler);
+        self.receivers.push(stream);
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct ProxyHandlers {
+    handlers: HashMap<ProxyId, Box<dyn ProxyMessageHandler>>,
+}
+
+impl ProxyHandlers {
+    pub(crate) fn new() -> Self {
+        Self {
+            handlers: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn add_handler<S: ProxyMessageHandler + 'static>(
+        &mut self,
+        id: ProxyId,
+        handler: S,
+    ) {
         self.handlers.insert(id, Box::new(handler));
-        self.rx.push(stream);
     }
 
     pub(crate) fn get_handler(
@@ -164,7 +185,7 @@ impl fmt::Debug for Proxies {
 impl Stream for Proxies {
     type Item = ();
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.get_mut().rx).poll_next(cx)
+        Pin::new(&mut self.get_mut().receivers).poll_next(cx)
     }
 }
 

@@ -13,58 +13,61 @@ impl Recorder {
             events: EventStore::new(),
         }
     }
+}
 
-    async fn handle_command(
-        &mut self,
-        kind: RecorderCommand,
-        reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
-    ) -> Result<(), anyhow::Error> {
-        let result = self.try_handle_command(kind).await;
-        reply_tx
-            .send(result)
-            .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
-        Ok(())
+async fn handle_command(
+    events: EventStore,
+    kind: RecorderCommand,
+    reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
+) -> Result<(), anyhow::Error> {
+    let result = try_handle_command(events, kind).await;
+    reply_tx
+        .send(result)
+        .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
+    Ok(())
+}
+
+async fn try_handle_command(
+    events: EventStore,
+    kind: RecorderCommand,
+) -> Result<(), anyhow::Error> {
+    match kind {
+        RecorderCommand::Record(path) => events.save_file(path)?,
     }
+    Ok(())
+}
 
-    async fn try_handle_command(&mut self, kind: RecorderCommand) -> Result<(), anyhow::Error> {
-        match kind {
-            RecorderCommand::Record(path) => self.events.save_file(path)?,
-        }
-        Ok(())
-    }
-
-    fn handle_proxy_message<P>(
-        &self,
-        mut rx: mpsc::UnboundedReceiver<
-            Message<
-                <P as ProxyDownstream>::IncomingMessage,
-                <P as ProxyDownstream>::OutgoingMessage,
-                <P as ProxyUpstream>::IncomingMessage,
-            >,
+fn handle_proxy_message<P>(
+    events: EventStore,
+    mut rx: mpsc::UnboundedReceiver<
+        Message<
+            <P as ProxyDownstream>::IncomingMessage,
+            <P as ProxyDownstream>::OutgoingMessage,
+            <P as ProxyUpstream>::IncomingMessage,
         >,
-        proxy: P,
-    ) -> BoxedProxyStream
-    where
-        P: Proxy,
-        <P as ProxyDownstream>::IncomingMessage: RecordEvent + Clone,
-        <P as ProxyDownstream>::OutgoingMessage: RecordEvent + Clone,
-        <P as ProxyUpstream>::IncomingMessage: RecordEvent + Clone,
-    {
-        let events = self.events.clone();
-        Box::pin(stream! {
-            while let Some(message) = rx.recv().await {
-                let events = events.clone();
-                match process_proxy_message(events, message, &proxy).await {
-                    Ok(()) => yield (),
-                    Err(e) => {
-                        // TODO: better error handling
-                        error!("Failed to process proxy message: {}", e);
-                        yield ();
-                    }
+    >,
+    proxy: P,
+) -> BoxedProxyStream
+where
+    P: Proxy,
+    <P as ProxyDownstream>::IncomingMessage: RecordEvent + Clone,
+    <P as ProxyDownstream>::OutgoingMessage: RecordEvent + Clone,
+    <P as ProxyUpstream>::IncomingMessage: RecordEvent + Clone,
+{
+    let events = events.clone();
+    Box::pin(stream! {
+        while let Some(message) = rx.recv().await {
+            let events = events.clone();
+            match process_proxy_message(events, message, &proxy).await {
+                Ok(()) => yield (),
+                Err(e) => {
+                    // TODO: better error handling
+                    error!("Failed to process proxy message: {}", e);
+                    yield ();
                 }
             }
-        })
-    }
+        }
+    })
 }
 
 async fn process_proxy_message<P, DIN, DOUT, UIN>(
@@ -122,21 +125,29 @@ impl Processor for Recorder {
     type Command = RecorderCommand;
 
     async fn start(
-        &mut self,
-        mut rx: mpsc::UnboundedReceiver<MacawCommand<RecorderCommand>>,
+        self,
+        rx: mpsc::UnboundedReceiver<MacawCommand<RecorderCommand>>,
     ) -> Result<(), anyhow::Error> {
-        loop {
-            tokio::select! {
-                Some(event) = rx.recv() => {
-                    match event {
-                        MacawCommand { kind, reply_tx } => {
-                            self.handle_command(kind, reply_tx).await?;
-                        }
+        let Self { events, proxies } = self;
+
+        let rx_stream =
+            tokio_stream::wrappers::UnboundedReceiverStream::new(rx).then(move |event| {
+                let events = events.clone();
+                async move {
+                    let MacawCommand { kind, reply_tx } = event;
+                    if let Err(e) = handle_command(events, kind, reply_tx).await {
+                        error!("Failed to handle command: {}", e);
                     }
                 }
-                _ = self.proxies.next() => {}
-            }
+            });
+
+        let proxies_stream: Pin<Box<dyn Stream<Item = ()>>> = Box::pin(proxies);
+        let rx_stream: Pin<Box<dyn Stream<Item = ()>>> = Box::pin(rx_stream);
+        let mut streams = stream::select_all([rx_stream, proxies_stream]);
+        while streams.next().await.is_some() {
+            // Wait for the next event
         }
+        Ok(())
     }
 }
 
@@ -157,7 +168,8 @@ impl Recorder {
         <P as ProxyUpstream>::IncomingMessage: RecordEvent + Clone,
     {
         let proxy_id = proxy.id();
-        let proxy_stream = self.handle_proxy_message(rx, proxy);
+        let events = self.events.clone();
+        let proxy_stream = handle_proxy_message(events, rx, proxy);
         let proxy_sender = |_| -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>> {
             Box::pin(futures::future::err(anyhow::anyhow!(
                 "Proxy in recording mode are not expected to forward synthetic messages"

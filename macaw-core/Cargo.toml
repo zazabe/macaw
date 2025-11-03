@@ -29,6 +29,7 @@ pin-project-lite.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 tracing.workspace = true
 typetag.workspace = true
 uuid.workspace = true

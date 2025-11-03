@@ -136,23 +136,23 @@ impl PendingRequestsInner {
         };
 
         match replay_pending {
-            Some(mut pending) => match pending.state {
-                DownstreamReceived(downstream) => {
-                    pending.state = PendingResponseState::RequestMatched {
-                        downstream,
-                        replay: request,
-                    };
-                    self.pending_responses.push(pending);
-                    Ok(())
-                }
-                _ => {
-                    self.pending_responses.push(pending);
-                    Err(anyhow::anyhow!(
+            Some(mut pending) => {
+                let result = match pending.state {
+                    DownstreamReceived(downstream) => {
+                        pending.state = PendingResponseState::RequestMatched {
+                            downstream,
+                            replay: request,
+                        };
+                        Ok(())
+                    }
+                    _ => Err(anyhow::anyhow!(
                         "Replay request already received, request id: {}",
                         request.request_id
-                    ))
-                }
-            },
+                    )),
+                };
+                self.pending_responses.push(pending);
+                result
+            }
             None => {
                 self.pending_responses
                     .push(PendingResponse::replay_received(request));
@@ -178,7 +178,7 @@ impl PendingRequestsInner {
         match downstream_pending {
             Some(mut pending) => match pending.state {
                 ReplayReceived(replay) => {
-                    pending.state = PendingResponseState::RequestMatched {
+                    pending.state = RequestMatched {
                         downstream: request,
                         replay,
                     };
@@ -226,14 +226,11 @@ impl PendingRequestsInner {
         };
 
         match pending {
-            Some(pending) => match pending.state {
+            Some(mut pending) => match pending.state {
                 ReplayReceived(replay) => {
-                    let proxy_response = pending.proxy_response.clone();
-                    let rx = proxy_response.subscribe();
-                    self.pending_responses.push(PendingResponse::new(
-                        PendingResponseState::ResponsePending { response, replay },
-                        proxy_response,
-                    ));
+                    pending.state = ResponsePending { response, replay };
+                    let rx = pending.proxy_response.subscribe();
+                    self.pending_responses.push(pending);
                     Ok(rx)
                 }
                 RequestMatched { downstream, replay } => {
@@ -250,7 +247,7 @@ impl PendingRequestsInner {
                 )),
             },
             None => Err(anyhow::anyhow!(
-                "At least a replay request should have been received already for response id: {}",
+                "A replay request should have been received already for response id: {}",
                 response.request_id
             )),
         }
