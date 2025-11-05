@@ -34,3 +34,4 @@ tokio.workspace = true
 tracing.workspace = true
 typetag.workspace = true
 uuid.workspace = true
+pin-project-lite.workspace = true

@@ -1,14 +1,16 @@
+mod actor;
 mod io;
 mod macaw;
 mod model;
 mod processor;
-mod support;
+mod proxy;
 
 pub mod prelude {
+    pub use crate::actor::*;
     pub use crate::macaw::*;
     pub use crate::model::*;
     pub use crate::processor::*;
-    pub use crate::support::*;
+    pub use crate::proxy::*;
 }
 
 pub(crate) mod lib {
@@ -32,9 +34,10 @@ pub(crate) mod lib {
     pub(crate) use tracing::{debug, error, info, warn};
     pub(crate) use uuid::Uuid;
 
+    pub(crate) use crate::actor::*;
     pub(crate) use crate::io::*;
     pub(crate) use crate::macaw::*;
     pub(crate) use crate::model::*;
     pub(crate) use crate::processor::*;
-    pub(crate) use crate::support::*;
+    pub(crate) use crate::proxy::*;
 }

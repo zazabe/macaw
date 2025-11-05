@@ -1,5 +1,8 @@
 use http_body_util::BodyExt;
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::{
+    client::legacy::{Client, connect::HttpConnector},
+    rt::TokioExecutor,
+};
 use rustls_platform_verifier::ConfigVerifierExt;
 
 use crate::lib::*;
@@ -10,10 +13,7 @@ pub(crate) struct HttpClient {
 }
 
 impl HttpClient {
-    pub(crate) fn new<Executor>(executor: Executor, addr: SocketAddr) -> Result<Self, anyhow::Error>
-    where
-        Executor: TaskExecutor,
-    {
+    pub(crate) fn new(addr: SocketAddr) -> Result<Self, anyhow::Error> {
         let tls_config = rustls::ClientConfig::with_platform_verifier()?;
         let mut http = HttpConnector::new();
         http.enforce_http(false);
@@ -22,8 +22,7 @@ impl HttpClient {
             .https_or_http()
             .enable_all_versions()
             .wrap_connector(http);
-        let executor = TaskExecutorWrapper::new(executor);
-        let client = Client::builder(executor).build(https);
+        let client = Client::builder(TokioExecutor::new()).build(https);
         Ok(Self { client })
     }
 
@@ -47,41 +46,5 @@ impl HttpClient {
             HttpResponse::from_parts(parts, BodyBytes::new(bytes))
         };
         Ok(response)
-    }
-}
-
-#[derive(Clone)]
-struct TaskExecutorWrapper<Executor> {
-    executor: Executor,
-}
-
-impl<Executor> TaskExecutorWrapper<Executor>
-where
-    Executor: TaskExecutor,
-{
-    pub fn new(executor: Executor) -> Self {
-        Self { executor }
-    }
-}
-
-impl<Executor> fmt::Debug for TaskExecutorWrapper<Executor>
-where
-    Executor: TaskExecutor,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TaskExecutorWrapper")
-    }
-}
-
-impl<Executor, Fut> hyper::rt::Executor<Fut> for TaskExecutorWrapper<Executor>
-where
-    Executor: TaskExecutor + Send + Sync + Clone + 'static,
-    Fut: Future<Output = ()> + 'static,
-{
-    fn execute(&self, fut: Fut) {
-        self.executor.spawn(Box::pin(async move {
-            fut.await;
-            Ok(())
-        }));
     }
 }

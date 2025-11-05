@@ -1,7 +1,7 @@
-mod actor;
-mod reply;
+mod messaging;
 mod terminator;
+mod traits;
 
-pub use actor::*;
-pub use reply::*;
+pub use messaging::*;
 pub use terminator::*;
+pub use traits::*;

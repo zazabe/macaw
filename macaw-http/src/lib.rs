@@ -2,12 +2,10 @@ mod io;
 mod model;
 mod parsing;
 mod proxy;
-
 pub mod prelude {
     pub use crate::model::*;
     pub use crate::proxy::*;
 }
-
 pub(crate) mod lib {
     pub(crate) use crate::io::*;
     pub(crate) use crate::model::*;
@@ -23,6 +21,7 @@ pub(crate) mod lib {
     pub(crate) use std::fmt;
     pub(crate) use std::future::Future;
     pub(crate) use std::net::SocketAddr;
+    pub(crate) use std::pin::Pin;
     pub(crate) use std::rc::Rc;
     pub(crate) use tokio::net::TcpListener;
     pub(crate) use tokio::sync::mpsc;

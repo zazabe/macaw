@@ -1,6 +1,8 @@
 use crate::lib::*;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
+use tokio::fs::File as TokioFile;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RecordFile {
@@ -8,59 +10,15 @@ pub(crate) struct RecordFile {
     pub(crate) events: Vec<Event<Box<dyn RecordEvent>>>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct EventStore {
-    inner: Rc<RefCell<EventStoreInner>>,
-}
-
-impl EventStore {
-    pub(crate) fn new() -> Self {
-        Self {
-            inner: Rc::new(RefCell::new(EventStoreInner::new())),
-        }
-    }
-
-    /// Load all events from a single YAML document containing a top-level sequence.
-    pub(crate) fn from_file<P>(path: P) -> Result<Self, anyhow::Error>
-    where
-        P: AsRef<Path>,
-    {
-        let inner = EventStoreInner::from_file(path)?;
-        Ok(Self {
-            inner: Rc::new(RefCell::new(inner)),
-        })
-    }
-
-    /// Save header and events as a single YAML document with top-level struct.
-    pub(crate) fn save_file<P>(&self, path: P) -> Result<(), anyhow::Error>
-    where
-        P: AsRef<Path>,
-    {
-        self.inner.borrow().save_file(path)?;
-        Ok(())
-    }
-
-    pub(crate) fn push<E: RecordEvent>(&self, id: ProxyId, event: E) {
-        self.inner.borrow_mut().push(id, event);
-    }
-}
-
-impl Iterator for EventStore {
-    type Item = Event<Box<dyn RecordEvent>>;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.borrow_mut().next()
-    }
-}
-
 #[derive(Debug)]
-struct EventStoreInner {
+pub(crate) struct EventStore {
     header: RecordHeader,
     events: Vec<Event<Box<dyn RecordEvent>>>,
     index: usize,
 }
 
-impl EventStoreInner {
-    fn new() -> Self {
+impl EventStore {
+    pub(crate) fn new() -> Self {
         Self {
             header: RecordHeader::new(),
             events: Vec::new(),
@@ -69,7 +27,7 @@ impl EventStoreInner {
     }
 
     /// Load all events from a single YAML document containing a top-level sequence.
-    fn from_file<P>(path: P) -> Result<Self, anyhow::Error>
+    pub(crate) fn from_file<P>(path: P) -> Result<Self, anyhow::Error>
     where
         P: AsRef<Path>,
     {
@@ -88,31 +46,38 @@ impl EventStoreInner {
         })
     }
 
-    /// Save header and events as a single YAML document with top-level struct.
-    fn save_file<P>(&self, path: P) -> Result<(), anyhow::Error>
+    /// Save header and events as a single YAML document with top-level struct asynchronously.
+    pub(crate) fn save_file<P>(
+        &self,
+        path: P,
+    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send
     where
-        P: AsRef<Path>,
+        P: AsRef<Path> + Send,
     {
         debug!(
             "Saving {} events to file: {:?}",
             self.events.len(),
             path.as_ref().display()
         );
-        let file = File::create(path.as_ref())?;
-        let writer = BufWriter::new(file);
         let rf = RecordFile {
             header: self.header.clone(),
             events: self.events.clone(),
         };
-        serde_yaml::to_writer(writer, &rf)?;
-        Ok(())
+
+        async move {
+            let ser = serde_yaml::to_string(&rf)?;
+            let mut file = TokioFile::create(path.as_ref()).await?;
+            file.write_all(ser.as_bytes()).await?;
+            file.flush().await?;
+            Ok(())
+        }
     }
 
-    fn push<E: RecordEvent>(&mut self, id: ProxyId, event: E) {
-        self.events.push(Event::new(id, Box::new(event)));
+    pub(crate) fn push(&mut self, id: ProxyId, event: Box<dyn RecordEvent>) {
+        self.events.push(Event::new(id, event));
     }
 
-    fn next(&mut self) -> Option<Event<Box<dyn RecordEvent>>> {
+    pub(crate) fn next(&mut self) -> Option<Event<Box<dyn RecordEvent>>> {
         if self.index >= self.events.len() {
             return None;
         }

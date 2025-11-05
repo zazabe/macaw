@@ -1,103 +1,85 @@
 use crate::lib::*;
 
-pub struct MacawSetup<Exec, Proc>
-where
-    Exec: TaskExecutor + 'static,
-    Proc: Processor + 'static,
-{
-    pub(crate) executor: Exec,
-    pub(crate) processor: Proc,
+pub trait Processor: Actor {}
+
+pub trait ProxyActor: Actor {
+    fn id(&self) -> ProxyId;
 }
 
-impl<Exec, Proc> MacawSetup<Exec, Proc>
-where
-    Exec: TaskExecutor + 'static,
-    Proc: Processor + 'static,
-{
-    pub fn new(executor: Exec, processor: Proc) -> Self {
+pub struct Macaw<P: Processor> {
+    context: ActorContext,
+    processor: ActorHandle<P>,
+    proxies: Vec<Box<dyn ErasedActorHandle>>,
+}
+
+impl Macaw<Recorder> {
+    pub fn recorder() -> Self {
+        let context = ActorContext::new();
+        let processor = Recorder::new();
+        let handle = processor.run(&context);
         Self {
-            executor,
-            processor,
+            context,
+            processor: handle,
+            proxies: Vec::new(),
         }
     }
 
-    pub fn start(self) -> Macaw<Proc::Command> {
-        let Self {
-            executor,
-            processor,
-        } = self;
-        let (tx, rx) = mpsc::unbounded_channel();
-        let task = executor.spawn(Box::pin(async move {
-            processor.start(rx).await?;
-            Ok(())
-        }));
-        Macaw::new(task, tx)
+    pub async fn record(self, path: PathBuf) -> Result<(), anyhow::Error> {
+        self.processor
+            .request(RecorderCommand::WriteToFile(path))
+            .await?
     }
 
-    pub fn processor(&mut self) -> &mut Proc {
-        &mut self.processor
-    }
-
-    pub fn executor(&self) -> Exec {
-        self.executor.clone()
-    }
-}
-
-pub struct Macaw<Command: ProcessorCommand> {
-    task: Option<TokioTask>,
-    tx: mpsc::UnboundedSender<MacawCommand<Command>>,
-}
-
-impl<Command: ProcessorCommand> Macaw<Command> {
-    fn new(task: TokioTask, tx: mpsc::UnboundedSender<MacawCommand<Command>>) -> Self {
-        Self {
-            task: Some(task),
-            tx,
-        }
-    }
-
-    pub fn stop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.cancel();
-        }
-    }
-
-    pub(crate) async fn send_command(&self, command: Command) -> Result<(), anyhow::Error> {
-        let (tx, rx) = oneshot::channel();
-        self.tx
-            .send(MacawCommand::new(command.clone(), tx))
-            .map_err(|_| anyhow::anyhow!("Failed to send command: {:?}", command))?;
-        rx.await
-            .map_err(|_| anyhow::anyhow!("Failed to receive command response: {:?}", command))??;
+    pub fn add_proxy_with_channel<P: ProxyActor>(
+        &mut self,
+        proxy: P,
+        rx: ActorChannelReceiver<P>,
+        tx: ActorChannelSender<P>,
+    ) -> Result<(), anyhow::Error> {
+        let handle = proxy.run_with_channel(&self.context, tx, rx);
+        self.proxies.push(Box::new(handle));
         Ok(())
     }
 }
 
-impl<Command: ProcessorCommand> Drop for Macaw<Command> {
-    fn drop(&mut self) {
-        self.stop();
+impl Macaw<Replayer> {
+    pub fn replayer<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
+        let context = ActorContext::new();
+        let processor = Replayer::new(path)?;
+        let handle = processor.run(&context);
+        Ok(Self {
+            context,
+            processor: handle,
+            proxies: Vec::new(),
+        })
+    }
+
+    pub async fn play(self) -> Result<(), anyhow::Error> {
+        self.processor.request(ReplayerCommand::Play).await?
+    }
+
+    pub async fn add_proxy_with_channel<P>(
+        &mut self,
+        proxy: P,
+        rx: ActorChannelReceiver<P>,
+        tx: ActorChannelSender<P>,
+    ) -> Result<(), anyhow::Error>
+    where
+        P: ProxyActor + ActorHandler<Record, Reply = Result<(), anyhow::Error>>,
+    {
+        let proxy_id = proxy.id();
+        let handle = proxy.run_with_channel(&self.context, tx, rx);
+        let sender = Box::new(handle.sender());
+        self.processor
+            .request(ReplayerCommand::RegisterProxy(proxy_id, sender))
+            .await??;
+        self.proxies.push(Box::new(handle));
+        Ok(())
     }
 }
 
-pub trait ProcessorCommand: fmt::Debug + Clone + 'static {}
-
-pub struct MacawCommand<Command: ProcessorCommand> {
-    pub(crate) kind: Command,
-    pub(crate) reply_tx: oneshot::Sender<Result<(), anyhow::Error>>,
-}
-
-impl<Command: ProcessorCommand> MacawCommand<Command> {
-    pub(crate) fn new(kind: Command, reply_tx: oneshot::Sender<Result<(), anyhow::Error>>) -> Self {
-        Self { kind, reply_tx }
+impl<Proc: Processor> Macaw<Proc> {
+    pub fn processor_handle(&self) -> ActorHandle<Proc> {
+        self.processor.clone()
     }
-}
-
-#[async_trait::async_trait(?Send)]
-pub trait Processor {
-    type Command: ProcessorCommand;
-
-    async fn start(
-        self,
-        rx: mpsc::UnboundedReceiver<MacawCommand<Self::Command>>,
-    ) -> Result<(), anyhow::Error>;
 }

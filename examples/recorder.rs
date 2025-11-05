@@ -3,25 +3,16 @@ use std::{path::PathBuf, time::Duration};
 use macaw::core::*;
 use macaw::http::*;
 
-fn main() -> Result<(), anyhow::Error> {
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
     unsafe { std::env::set_var("RUST_LOG", "debug") };
     tracing_subscriber::fmt::init();
+    let mut macaw = Macaw::recorder();
+    macaw
+        .add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
+        .await?;
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
-        let mut setup = MacawSetup::new(LocalTokioExecutor, Recorder::new());
-        setup
-            .add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
-            .await?;
-        let mut macaw = setup.start();
-
-        tokio::time::sleep(Duration::from_secs(10)).await;
-        macaw.record(PathBuf::from("./data/record.yaml")).await?;
-
-        Ok::<(), anyhow::Error>(())
-    })?;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    macaw.record(PathBuf::from("./data/record.yaml")).await?;
     Ok(())
 }

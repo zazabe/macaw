@@ -1,7 +1,7 @@
 use tokio::sync::watch;
 
 /// A terminator can be used to signal tasks to terminate.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TaskTerminator {
     tx: watch::Sender<bool>,
     rx: watch::Receiver<bool>,

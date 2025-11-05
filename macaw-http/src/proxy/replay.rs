@@ -1,36 +1,26 @@
 use crate::lib::*;
 
-type HttpMessage = Message<HttpRequestEvent, HttpResponseEvent, UnexpectedEvent>;
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct HttpReplayProxy {
     id: ProxyId,
-    downstream: Rc<HttpServer>,
+    downstream: HttpServer,
     pending_requests: PendingRequests,
 }
 
 impl HttpReplayProxy {
-    pub(crate) async fn new<Executor>(
+    pub(crate) async fn new(
         proxy_id: ProxyId,
-        executor: Executor,
         addr: SocketAddr,
-    ) -> Result<(mpsc::UnboundedReceiver<HttpMessage>, Self), anyhow::Error>
-    where
-        Executor: TaskExecutor + Clone,
-    {
-        let (replayer_tx, replayer_rx) = mpsc::unbounded_channel();
-        let mut downstream =
-            HttpServer::new(addr, Box::new(Sender::new(proxy_id, replayer_tx.clone())));
-        downstream.start(executor).await?;
+        sender: Box<dyn HttpServerRequestSender>,
+    ) -> Result<Self, anyhow::Error> {
+        let mut downstream = HttpServer::new(addr, sender);
+        downstream.start().await?;
 
-        Ok((
-            replayer_rx,
-            Self {
-                id: proxy_id,
-                downstream: Rc::new(downstream),
-                pending_requests: PendingRequests::new(),
-            },
-        ))
+        Ok(Self {
+            id: proxy_id,
+            downstream,
+            pending_requests: PendingRequests::new(),
+        })
     }
 }
 
@@ -40,13 +30,12 @@ impl Proxy for HttpReplayProxy {
     }
 }
 
-#[async_trait::async_trait(?Send)]
 impl ProxyDownstream for HttpReplayProxy {
     type IncomingMessage = HttpRequestEvent;
     type OutgoingMessage = HttpResponseEvent;
 
     async fn downstream_incoming_process(
-        &self,
+        &mut self,
         request: HttpRequestEvent,
     ) -> Result<Option<HttpResponseEvent>, anyhow::Error> {
         debug!("Downstream incoming process: {:?}", request);
@@ -64,34 +53,39 @@ impl ProxyUpstream for HttpReplayProxy {
 impl ProxyHandler for HttpReplayProxy {
     type Message = HttpEvent;
 
-    async fn handle_message(&self, event: HttpEvent) -> Result<(), anyhow::Error> {
-        match event {
-            HttpEvent::HttpRequest(request) => {
-                self.pending_requests.add_replay_request(request)?;
+    fn handle_message<'a>(
+        &'a mut self,
+        event: HttpEvent,
+    ) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send + 'a>> {
+        Box::pin(async move {
+            match event {
+                HttpEvent::HttpRequest(request) => {
+                    self.pending_requests.add_replay_request(request)?;
+                }
+                HttpEvent::HttpResponse(response) => {
+                    self.pending_requests.wait_for_request(response).await?;
+                }
             }
-            HttpEvent::HttpResponse(response) => {
-                self.pending_requests.wait_for_request(response).await?;
-            }
-        }
-        debug!("Handled message: {:?}", self.pending_requests);
-        Ok(())
+            debug!("Handled message: {:?}", self.pending_requests);
+            Ok(())
+        })
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct PendingRequests(Rc<RefCell<PendingRequestsInner>>);
+#[derive(Debug, Default)]
+struct PendingRequests {
+    pending_responses: Vec<PendingResponse>,
+}
 
 impl PendingRequests {
     fn new() -> Self {
-        Self(Default::default())
+        Self {
+            pending_responses: Vec::new(),
+        }
     }
 
-    fn add_replay_request(&self, request: HttpRequestEvent) -> Result<(), anyhow::Error> {
-        self.0.borrow_mut().add_replay_request(request)
-    }
-
-    async fn wait_for_request(&self, response: HttpResponseEvent) -> Result<(), anyhow::Error> {
-        let mut rx = self.0.borrow_mut().add_response(response)?;
+    async fn wait_for_request(&mut self, response: HttpResponseEvent) -> Result<(), anyhow::Error> {
+        let mut rx = self.add_response(response)?;
         if rx.borrow_and_update().is_some() {
             return Ok(());
         }
@@ -100,29 +94,16 @@ impl PendingRequests {
     }
 
     async fn wait_for_response(
-        &self,
+        &mut self,
         request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let mut rx = self.0.borrow_mut().add_downstream_request(request)?;
+        let mut rx = self.add_downstream_request(request)?;
         if let Some(response) = rx.borrow_and_update().clone() {
             return Ok(response);
         }
         let changed_value = rx.wait_for(|v| v.is_some()).await?;
         let response = changed_value.clone().unwrap_or_else(|| unreachable!());
         Ok(response)
-    }
-}
-
-#[derive(Debug, Default)]
-struct PendingRequestsInner {
-    pending_responses: Vec<PendingResponse>,
-}
-
-impl PendingRequestsInner {
-    fn new() -> Self {
-        Self {
-            pending_responses: Vec::new(),
-        }
     }
 
     fn add_replay_request(&mut self, request: HttpRequestEvent) -> Result<(), anyhow::Error> {
@@ -333,20 +314,21 @@ enum PendingResponseState {
     },
 }
 
-#[async_trait::async_trait(?Send)]
 pub trait HttpMacawReplaySetup {
-    async fn add_http_proxy(&mut self, proxy_id: &str, addr: &str) -> Result<(), anyhow::Error>;
+    fn add_http_proxy(
+        &mut self,
+        proxy_id: &str,
+        addr: &str,
+    ) -> impl Future<Output = Result<(), anyhow::Error>>;
 }
 
-#[async_trait::async_trait(?Send)]
-impl<Exec> HttpMacawReplaySetup for MacawSetup<Exec, Replayer>
-where
-    Exec: TaskExecutor,
-{
+impl HttpMacawReplaySetup for Macaw<Replayer> {
     async fn add_http_proxy(&mut self, proxy_id: &str, addr: &str) -> Result<(), anyhow::Error> {
-        let executor = self.executor();
-        let (rx, proxy) = HttpReplayProxy::new(proxy_id.parse()?, executor, addr.parse()?).await?;
-        self.processor().add_proxy(rx, proxy);
+        let (tx, rx) = actor_channel::<ProxyReplayerActor<HttpReplayProxy>>();
+        let proxy =
+            HttpReplayProxy::new(proxy_id.parse()?, addr.parse()?, Box::new(tx.clone())).await?;
+        let actor = ProxyReplayerActor::new(proxy);
+        self.add_proxy_with_channel(actor, rx, tx).await?;
         Ok(())
     }
 }

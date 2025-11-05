@@ -5,14 +5,12 @@ use hyper::service::Service;
 
 use crate::lib::*;
 
-pub(crate) struct HttpRequestEnvelope {
-    pub(crate) request: HttpRequest,
-    pub(crate) response_tx: oneshot::Sender<HttpResponseEvent>,
-}
-
 #[dyn_clonable::clonable]
-pub(crate) trait HttpServerRequestSender: Clone + 'static {
-    fn send(&self, envelope: HttpRequestEnvelope) -> Result<(), anyhow::Error>;
+pub(crate) trait HttpServerRequestSender: Send + Sync + Clone + 'static {
+    fn send<'a>(
+        &'a self,
+        envelope: HttpRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, anyhow::Error>> + Send + 'a>>;
 }
 
 impl fmt::Debug for Box<dyn HttpServerRequestSender> {
@@ -24,48 +22,37 @@ impl fmt::Debug for Box<dyn HttpServerRequestSender> {
 #[derive(Debug)]
 pub(crate) struct HttpServer {
     addr: SocketAddr,
-    tx: Box<dyn HttpServerRequestSender>,
+    sender: Box<dyn HttpServerRequestSender>,
     local_addr: Option<SocketAddr>,
-    task: Option<TokioTask>,
+    task: Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>,
 }
 
 impl HttpServer {
-    pub(crate) fn new(addr: SocketAddr, tx: Box<dyn HttpServerRequestSender>) -> Self {
+    pub(crate) fn new(addr: SocketAddr, sender: Box<dyn HttpServerRequestSender>) -> Self {
         Self {
             addr,
-            tx,
+            sender,
             local_addr: None,
             task: None,
         }
     }
 
-    pub(crate) async fn start<Executor>(&mut self, executor: Executor) -> Result<(), anyhow::Error>
-    where
-        Executor: TaskExecutor<
-                std::pin::Pin<
-                    Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + 'static>,
-                >,
-            > + 'static,
-    {
+    pub(crate) async fn start(&mut self) -> Result<(), anyhow::Error> {
         let listener = TcpListener::bind(self.addr).await?;
         let local_addr = listener.local_addr()?;
         info!("Listening on http://{}", local_addr);
         self.local_addr = Some(local_addr);
 
-        let task = executor.clone().spawn(Box::pin({
-            let exec = executor.clone();
-            let sender = self.tx.clone();
+        let task = tokio::spawn(Box::pin({
+            let sender = self.sender.clone();
             async move {
                 loop {
                     let (stream, _) = listener.accept().await?;
                     let io = TokioIo::new(stream);
-                    let handler = Handler {
+                    let service = RequestHandlerService {
                         sender: sender.clone(),
                     };
-                    exec.spawn(Box::pin(async move {
-                        http1::Builder::new().serve_connection(io, handler).await?;
-                        Ok(())
-                    }));
+                    tokio::spawn(http1::Builder::new().serve_connection(io, service));
                 }
             }
         }));
@@ -75,22 +62,23 @@ impl HttpServer {
 
     pub(crate) fn stop(&mut self) -> Result<(), anyhow::Error> {
         if let Some(task) = self.task.take() {
-            task.cancel();
+            task.abort();
         }
         Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-struct Handler {
+struct RequestHandlerService {
     sender: Box<dyn HttpServerRequestSender>,
 }
 
-impl Service<http::Request<Incoming>> for Handler {
+impl Service<http::Request<Incoming>> for RequestHandlerService {
     type Response = HttpResponse;
     type Error = anyhow::Error;
-    type Future =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>>>>;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
 
     fn call(&self, req: http::Request<Incoming>) -> Self::Future {
         let sender = self.sender.clone();
@@ -99,18 +87,11 @@ impl Service<http::Request<Incoming>> for Handler {
             let bytes = body.collect().await?.to_bytes();
             let request = http::Request::from_parts(parts, BodyBytes::new(bytes));
             debug!("Received request: {:?}", request);
-            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-            let env = HttpRequestEnvelope {
-                request,
-                response_tx,
-            };
-            sender
-                .send(env)
-                .map_err(|_| anyhow::anyhow!("Request channel closed"))?;
-            let response = response_rx
+            let response = sender
+                .send(request)
                 .await
-                .map_err(|_| anyhow::anyhow!("oneshot cancelled"))?;
-            response.to_response()
+                .map_err(|_| anyhow::anyhow!("Request channel closed"))?;
+            Ok(response)
         })
     }
 }
