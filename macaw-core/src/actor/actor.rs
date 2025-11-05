@@ -15,15 +15,31 @@ struct Envelope<A>(Box<dyn EnvelopeMessageTrait<Actor = A> + Send>)
 where
     A: Actor;
 
-impl<A: Actor> Envelope<A> {
+impl<A> Envelope<A>
+where
+    A: Actor,
+{
     fn new_message<M>(msg: M) -> Self
     where
         M: ActorMessage,
-        A: Actor + ActorHandler<M> + 'static,
+        A: Actor + ActorHandler<M, Reply = ()>,
     {
         Self(Box::new(EnvelopeMessage {
             actor_phantom: PhantomData,
             msg,
+            reply: None,
+        }))
+    }
+    fn new_request<M, R>(msg: M, reply: Reply<R>) -> Self
+    where
+        M: ActorMessage,
+        A: Actor + ActorHandler<M, Reply = R>,
+        R: Send + 'static,
+    {
+        Self(Box::new(EnvelopeMessage {
+            actor_phantom: PhantomData,
+            msg,
+            reply: Some(reply),
         }))
     }
 
@@ -38,38 +54,52 @@ trait EnvelopeMessageTrait: fmt::Debug {
     fn handle_with_actor<'a>(
         self: Box<Self>,
         actor: &'a mut Self::Actor,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send + 'a>>;
 }
 
-struct EnvelopeMessage<A, M>
+struct EnvelopeMessage<A, M, R>
 where
     M: ActorMessage,
+    R: Send,
 {
     actor_phantom: PhantomData<fn() -> A>,
     msg: M,
+    reply: Option<Reply<R>>,
 }
 
-impl<A, M> EnvelopeMessageTrait for EnvelopeMessage<A, M>
+impl<A, M, R> EnvelopeMessageTrait for EnvelopeMessage<A, M, R>
 where
-    A: Actor + ActorHandler<M>,
+    A: Actor + ActorHandler<M, Reply = R>,
     M: ActorMessage,
+    R: Send + 'static,
 {
     type Actor = A;
 
     fn handle_with_actor<'a>(
         self: Box<Self>,
         actor: &'a mut Self::Actor,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send + 'a>> {
         Box::pin(async move {
-            <Self::Actor as ActorHandler<M>>::handle(actor, self.msg).await;
+            match self.reply {
+                Some(reply) => {
+                    let outcome = <Self::Actor as ActorHandler<M>>::handle(actor, self.msg).await;
+                    reply.send(outcome)?;
+                    Ok(())
+                }
+                None => {
+                    <Self::Actor as ActorHandler<M>>::handle(actor, self.msg).await;
+                    Ok(())
+                }
+            }
         })
     }
 }
 
-impl<A, M> fmt::Debug for EnvelopeMessage<A, M>
+impl<A, M, R> fmt::Debug for EnvelopeMessage<A, M, R>
 where
     A: Actor,
     M: ActorMessage,
+    R: Send,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "EnvelopeMessage")
@@ -101,7 +131,9 @@ pub trait ActorHandler<M>: Send + 'static
 where
     M: ActorMessage,
 {
-    fn handle(&mut self, msg: M) -> impl Future<Output = ()> + Send;
+    type Reply: Send + 'static;
+
+    fn handle(&mut self, msg: M) -> impl Future<Output = Self::Reply> + Send;
 }
 
 pub struct ActorHandle<A>
@@ -118,12 +150,31 @@ where
 {
     pub fn send<M>(&self, message: M) -> Result<(), anyhow::Error>
     where
-        A: ActorHandler<M>,
+        A: ActorHandler<M, Reply = ()>,
         M: ActorMessage,
     {
+        self.send_to_channel(Envelope::new_message(message))
+    }
+
+    pub async fn request<M, R>(&self, message: M) -> Result<R, anyhow::Error>
+    where
+        A: ActorHandler<M, Reply = R>,
+        M: ActorMessage,
+        R: Send + 'static,
+    {
+        let (reply, response) = request_reply();
+        self.send_to_channel(Envelope::new_request(message, reply))?;
+        let result = response
+            .recv()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to receive reply: {}", e))?;
+        Ok(result)
+    }
+
+    fn send_to_channel(&self, envelope: Envelope<A>) -> Result<(), anyhow::Error> {
         self.tx
-            .send(Envelope::new_message(message))
-            .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
+            .send(envelope)
+            .map_err(|e| anyhow::anyhow!("Failed to send envelope: {}", e))?;
         Ok(())
     }
 
@@ -180,7 +231,10 @@ impl RunActorFuture {
                 futures::select! {
                     message = message_rx.recv().fuse() => match message {
                         Some(message) => {
-                            message.into_inner().handle_with_actor(&mut actor).await;
+                            if let Err(e) = message.into_inner().handle_with_actor(&mut actor).await {
+                                error!("Failed to handle message: {}", e);
+                                break;
+                            }
                         }
                         None => {
                             break;
