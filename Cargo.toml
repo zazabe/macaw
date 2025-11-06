@@ -40,6 +40,7 @@ tracing-subscriber = { version = "^0.3.16", features = [ "env-filter" ] }
 typetag = "0.2.21"
 url = "2.5.2"
 uuid = { version = "1.13", features = [ "v4", "serde" ] }
+take_mut = "0.2"
 
 [workspace.lints.rust]
 dead_code = "allow"

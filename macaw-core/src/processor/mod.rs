@@ -1,5 +1,7 @@
-pub mod recorder;
-pub mod replayer;
+mod messaging;
+mod recorder;
+mod replayer;
 
+pub use messaging::*;
 pub use recorder::*;
 pub use replayer::*;

@@ -1,43 +1,51 @@
 use crate::lib::*;
 
-impl<P> HttpServerRequestSender for ActorChannelSender<ProxyReplayerActor<P>>
+impl<P> HttpServerRequestResolver for ActorChannelSender<ProxyReplayerActor<P>>
 where
-    P: Proxy,
-    P: ProxyDownstream<IncomingMessage = HttpRequestEvent, OutgoingMessage = HttpResponseEvent>,
+    P: ProxyReplayer<
+            DownstreamIncomingMessage = HttpRequestEvent,
+            DownstreamOutgoingMessage = HttpResponseEvent,
+        >,
 {
-    fn send<'a>(
+    fn resolve_request<'a>(
         &'a self,
         request: HttpRequest,
     ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, anyhow::Error>> + Send + 'a>> {
         Box::pin(async move {
-            debug!("Sending request: {:?}", request);
+            let (response_sender, response_receiver) = response_channel::<HttpResponseEvent>();
             let request_event = HttpRequestEvent::from_request(&request)?;
-            let response_event = self.request(DownstreamMessage::from(request_event)).await?;
-            debug!("Received response: {:?}", response_event);
-            let response = match response_event {
-                Some(response_event) => response_event.to_response()?,
-                None => http::Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(BodyBytes::empty())?,
-            };
-            Ok(response)
+            debug!(
+                "HttpServerRequestResolver - Sent request: {:?}",
+                request_event
+            );
+            self.send(DownstreamMessageWithResponseSender::new(
+                request_event,
+                response_sender,
+            ))?;
+            let response_event = response_receiver.recv().await?;
+            debug!(
+                "HttpServerRequestResolver - Received response: {:?}",
+                response_event
+            );
+            response_event.to_response()
         })
     }
 }
 
-impl<P> HttpServerRequestSender for ActorChannelSender<ProxyRecorderActor<P>>
+impl<P> HttpServerRequestResolver for ActorChannelSender<ProxyRecorderActor<P>>
 where
-    P: Proxy,
-    P: ProxyDownstream<IncomingMessage = HttpRequestEvent, OutgoingMessage = HttpResponseEvent>,
+    P: ProxyRecorder<
+            DownstreamIncomingMessage = HttpRequestEvent,
+            DownstreamOutgoingMessage = HttpResponseEvent,
+        >,
 {
-    fn send<'a>(
+    fn resolve_request<'a>(
         &'a self,
         request: HttpRequest,
     ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, anyhow::Error>> + Send + 'a>> {
         Box::pin(async move {
-            debug!("Sending request: {:?}", request);
             let request_event = HttpRequestEvent::from_request(&request)?;
-            let response_event = self.request(DownstreamMessage::from(request_event)).await?;
+            let response_event = self.request(DownstreamMessage::new(request_event)).await?;
             let response = match response_event {
                 Some(response_event) => response_event.to_response()?,
                 None => http::Response::builder()

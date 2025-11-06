@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::lib::*;
 use arrayvec::ArrayString;
 use futures::future;
@@ -26,98 +28,107 @@ impl FromStr for ProxyId {
 }
 
 #[derive(Debug)]
-pub struct DownstreamMessage<P: Proxy>(<P as ProxyDownstream>::IncomingMessage);
+pub struct DownstreamMessageWithResponseSender<M, R> {
+    pub(crate) message: M,
+    pub(crate) response_sender: ResponseSender<R>,
+}
 
-impl<P: Proxy> DownstreamMessage<P> {
-    pub fn from(message: <P as ProxyDownstream>::IncomingMessage) -> Self {
-        Self(message)
-    }
-
-    pub fn into_inner(self) -> <P as ProxyDownstream>::IncomingMessage {
-        self.0
+impl<M, R> DownstreamMessageWithResponseSender<M, R> {
+    pub fn new(message: M, response_sender: ResponseSender<R>) -> Self {
+        Self {
+            message,
+            response_sender,
+        }
     }
 }
 
 #[derive(Debug)]
-pub struct UpstreamMessage<P: Proxy>(<P as ProxyUpstream>::IncomingMessage);
+pub struct DownstreamMessage<M> {
+    pub(crate) message: M,
+}
 
-impl<P: Proxy> UpstreamMessage<P> {
-    pub fn from(message: <P as ProxyUpstream>::IncomingMessage) -> Self {
-        Self(message)
-    }
-
-    pub fn into_inner(self) -> <P as ProxyUpstream>::IncomingMessage {
-        self.0
+impl<M> DownstreamMessage<M> {
+    pub fn new(message: M) -> Self {
+        Self { message }
     }
 }
 
-pub trait Proxy: Send + 'static
-where
-    Self: ProxyDownstream + ProxyUpstream + ProxyHandler + fmt::Debug + 'static,
-    <Self as ProxyDownstream>::IncomingMessage: RecordEvent,
-    <Self as ProxyDownstream>::OutgoingMessage: RecordEvent,
-    <Self as ProxyUpstream>::IncomingMessage: RecordEvent,
-    <Self as ProxyHandler>::Message: RecordEventUntagged,
-{
+#[derive(Debug)]
+pub struct UpstreamMessage<M> {
+    pub(crate) message: M,
+}
+
+/// ------------------------------------------------------------
+
+pub trait ProxyRecorder: Send + 'static {
+    type DownstreamIncomingMessage: RecordEvent + Clone;
+    type DownstreamOutgoingMessage: RecordEvent + Clone;
+    type UpstreamIncomingMessage: RecordEvent + Clone;
+
     fn id(&self) -> ProxyId;
-}
-
-/// Implemented by proxies sending outgoing messages to downstream (e.g. HTTP/WS server receiving requests).
-pub trait ProxyDownstream {
-    type IncomingMessage: RecordEvent + Clone;
-    type OutgoingMessage: RecordEvent + Clone;
 
     fn downstream_incoming_redact(
         &mut self,
-        message: Self::IncomingMessage,
-    ) -> impl Future<Output = Result<Self::IncomingMessage, anyhow::Error>> + Send {
-        future::ready(Ok(message))
+        message: Self::DownstreamIncomingMessage,
+    ) -> impl Future<Output = Result<Self::DownstreamIncomingMessage, anyhow::Error>> + Send {
+        future::ok(message)
     }
 
     fn downstream_incoming_process(
         &mut self,
-        message: Self::IncomingMessage,
-    ) -> impl Future<Output = Result<Option<Self::OutgoingMessage>, anyhow::Error>> + Send {
-        future::ready(Ok(None))
+        message: Self::DownstreamIncomingMessage,
+    ) -> impl Future<Output = Result<Option<Self::DownstreamOutgoingMessage>, anyhow::Error>> + Send
+    {
+        future::err(anyhow::anyhow!("Unexpected downstream message"))
     }
 
     fn downstream_outgoing_redact(
         &mut self,
-        message: Self::OutgoingMessage,
-    ) -> impl Future<Output = Result<Self::OutgoingMessage, anyhow::Error>> + Send {
-        future::ready(Ok(message))
+        message: Self::DownstreamOutgoingMessage,
+    ) -> impl Future<Output = Result<Self::DownstreamOutgoingMessage, anyhow::Error>> + Send {
+        future::ok(message)
     }
-}
-
-/// Implemented by proxies receiving incoming messages from upstream (e.g. WebSocket client stream).
-pub trait ProxyUpstream {
-    type IncomingMessage: RecordEvent + Clone;
 
     fn upstream_incoming_redact(
         &mut self,
-        message: Self::IncomingMessage,
-    ) -> impl Future<Output = Result<Self::IncomingMessage, anyhow::Error>> + Send {
-        future::ready(Ok(message))
+        message: Self::UpstreamIncomingMessage,
+    ) -> impl Future<Output = Result<Self::UpstreamIncomingMessage, anyhow::Error>> + Send {
+        future::ok(message)
     }
 
     fn upstream_incoming_process(
         &mut self,
-        message: Self::IncomingMessage,
+        message: Self::UpstreamIncomingMessage,
     ) -> impl Future<Output = Result<(), anyhow::Error>> + Send {
         future::ready(Err(anyhow::anyhow!("Unexpected upstream message")))
     }
 }
 
-/// Handle recorded events coming from the replayer actor.
-pub trait ProxyHandler {
-    type Message: RecordEventUntagged;
+pub trait ProxyReplayer: Send + 'static {
+    type DownstreamIncomingMessage: RecordEvent + Clone;
+    type DownstreamOutgoingMessage: RecordEvent + Clone;
+    type RecordedMessage: RecordEventUntagged + Clone;
 
-    fn handle_message<'a>(
-        &'a mut self,
-        message: Self::Message,
-    ) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send + 'a>> {
-        Box::pin(future::ready(Err(anyhow::anyhow!(
-            "Unexpected incoming message"
-        ))))
+    fn id(&self) -> ProxyId;
+
+    fn downstream_incoming_redact(
+        &mut self,
+        message: Self::DownstreamIncomingMessage,
+    ) -> impl Future<Output = Result<Self::DownstreamIncomingMessage, anyhow::Error>> + Send {
+        future::ok(message)
     }
+
+    fn downstream_incoming_process(
+        &mut self,
+        message: Self::DownstreamIncomingMessage,
+        response_sender: ResponseSender<Self::DownstreamOutgoingMessage>,
+    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send {
+        future::err(anyhow::anyhow!("Unexpected downstream message"))
+    }
+
+    fn handle_recorded_message<'a>(
+        &'a mut self,
+        message: Self::RecordedMessage,
+        replay_lock: ReplayLockHolder,
+    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
 }

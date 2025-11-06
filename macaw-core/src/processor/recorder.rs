@@ -33,10 +33,10 @@ impl ActorHandler<RecorderCommand> for Recorder {
     }
 }
 
-impl ActorHandler<Record> for Recorder {
+impl ActorHandler<RecordedEvent> for Recorder {
     type Reply = ();
 
-    async fn handle(&mut self, message: Record) {
+    async fn handle(&mut self, message: RecordedEvent) {
         self.events.push(message.proxy_id, message.event);
     }
 }

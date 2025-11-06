@@ -11,7 +11,7 @@ impl HttpReplayProxy {
     pub(crate) async fn new(
         proxy_id: ProxyId,
         addr: SocketAddr,
-        sender: Box<dyn HttpServerRequestSender>,
+        sender: Box<dyn HttpServerRequestResolver>,
     ) -> Result<Self, anyhow::Error> {
         let mut downstream = HttpServer::new(addr, sender);
         downstream.start().await?;
@@ -24,295 +24,213 @@ impl HttpReplayProxy {
     }
 }
 
-impl Proxy for HttpReplayProxy {
+impl ProxyReplayer for HttpReplayProxy {
+    type DownstreamIncomingMessage = HttpRequestEvent;
+    type DownstreamOutgoingMessage = HttpResponseEvent;
+    type RecordedMessage = HttpEvent;
+
     fn id(&self) -> ProxyId {
         self.id
     }
-}
-
-impl ProxyDownstream for HttpReplayProxy {
-    type IncomingMessage = HttpRequestEvent;
-    type OutgoingMessage = HttpResponseEvent;
 
     async fn downstream_incoming_process(
         &mut self,
         request: HttpRequestEvent,
-    ) -> Result<Option<HttpResponseEvent>, anyhow::Error> {
-        debug!("Downstream incoming process: {:?}", request);
-        let response = self.pending_requests.wait_for_response(request).await?;
-        Ok(Some(response))
+        response_sender: ResponseSender<HttpResponseEvent>,
+    ) -> Result<(), anyhow::Error> {
+        debug!(
+            "HttpReplayProxy - Downstream incoming process: {:?}",
+            request
+        );
+        self.pending_requests
+            .add_downstream_request(request, response_sender)
     }
-}
 
-#[async_trait::async_trait(?Send)]
-impl ProxyUpstream for HttpReplayProxy {
-    type IncomingMessage = UnexpectedEvent;
-}
-
-#[async_trait::async_trait(?Send)]
-impl ProxyHandler for HttpReplayProxy {
-    type Message = HttpEvent;
-
-    fn handle_message<'a>(
-        &'a mut self,
+    async fn handle_recorded_message(
+        &mut self,
         event: HttpEvent,
-    ) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send + 'a>> {
-        Box::pin(async move {
-            match event {
-                HttpEvent::HttpRequest(request) => {
-                    self.pending_requests.add_replay_request(request)?;
-                }
-                HttpEvent::HttpResponse(response) => {
-                    self.pending_requests.wait_for_request(response).await?;
-                }
+        replay_lock: ReplayLockHolder,
+    ) -> Result<(), anyhow::Error> {
+        match event {
+            HttpEvent::HttpRequest(request) => {
+                self.pending_requests
+                    .add_replay_request(request, replay_lock)?;
             }
-            debug!("Handled message: {:?}", self.pending_requests);
-            Ok(())
-        })
+            HttpEvent::HttpResponse(response) => {
+                self.pending_requests.resolve_pending_request(response)?;
+            }
+        }
+        debug!(
+            "HttpReplayProxy - Handling recorded message, pending requests: {:?}",
+            self.pending_requests
+        );
+
+        Ok(())
     }
 }
+
+// ------------------------------------------------------------
 
 #[derive(Debug, Default)]
 struct PendingRequests {
-    pending_responses: Vec<PendingResponse>,
+    requests: Vec<ReceivedRequest>,
 }
 
 impl PendingRequests {
     fn new() -> Self {
         Self {
-            pending_responses: Vec::new(),
+            requests: Vec::new(),
         }
     }
 
-    async fn wait_for_request(&mut self, response: HttpResponseEvent) -> Result<(), anyhow::Error> {
-        let mut rx = self.add_response(response)?;
-        if rx.borrow_and_update().is_some() {
-            return Ok(());
-        }
-        let changed_value = rx.wait_for(|v| v.is_some()).await?;
-        Ok(())
-    }
-
-    async fn wait_for_response(
+    fn add_replay_request(
         &mut self,
-        request: HttpRequestEvent,
-    ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let mut rx = self.add_downstream_request(request)?;
-        if let Some(response) = rx.borrow_and_update().clone() {
-            return Ok(response);
-        }
-        let changed_value = rx.wait_for(|v| v.is_some()).await?;
-        let response = changed_value.clone().unwrap_or_else(|| unreachable!());
-        Ok(response)
-    }
+        replay_request: HttpRequestEvent,
+        replay_lock: ReplayLockHolder,
+    ) -> Result<(), anyhow::Error> {
+        let pending = self
+            .requests
+            .iter_mut()
+            .position(|pending| pending.matches_downstream(&replay_request))
+            .map(|index| self.requests.remove(index));
 
-    fn add_replay_request(&mut self, request: HttpRequestEvent) -> Result<(), anyhow::Error> {
-        use self::PendingResponseState::*;
-        let replay_pending = {
-            let downstream_index = self
-                .pending_responses
-                .iter()
-                .position(|pending| pending.match_replay_request(&request));
-            downstream_index.map(|index| self.pending_responses.remove(index))
-        };
-
-        match replay_pending {
-            Some(mut pending) => {
-                let result = match pending.state {
-                    DownstreamReceived(downstream) => {
-                        pending.state = PendingResponseState::RequestMatched {
-                            downstream,
-                            replay: request,
-                        };
-                        Ok(())
-                    }
-                    _ => Err(anyhow::anyhow!(
-                        "Replay request already received, request id: {}",
-                        request.request_id
-                    )),
-                };
-                self.pending_responses.push(pending);
-                result
-            }
+        match pending {
+            Some(pending) => match pending {
+                ReceivedRequest::Downstream(downstream) => {
+                    self.requests.push(ReceivedRequest::Matched(MatchedRequest {
+                        replay: replay_request,
+                        downstream: downstream.request,
+                        response_sender: downstream.response_sender,
+                    }));
+                    replay_lock.unlock();
+                }
+                request => {
+                    return Err(anyhow::anyhow!("Invalid request state"));
+                }
+            },
             None => {
-                self.pending_responses
-                    .push(PendingResponse::replay_received(request));
-                Ok(())
+                self.requests.push(ReceivedRequest::Replay(ReplayRequest {
+                    request: replay_request,
+                    replay_lock,
+                }));
             }
         }
+        Ok(())
     }
 
     fn add_downstream_request(
         &mut self,
-        request: HttpRequestEvent,
-    ) -> Result<watch::Receiver<Option<HttpResponseEvent>>, anyhow::Error> {
-        use self::PendingResponseState::*;
+        downstream_request: HttpRequestEvent,
+        response_sender: ResponseSender<HttpResponseEvent>,
+    ) -> Result<(), anyhow::Error> {
+        let pending = self
+            .requests
+            .iter_mut()
+            .position(|pending| pending.matches_replay(&downstream_request))
+            .map(|index| self.requests.remove(index));
 
-        let downstream_pending = {
-            let downstream_index = self
-                .pending_responses
-                .iter()
-                .position(|pending| pending.match_downstream_request(&request));
-            downstream_index.map(|index| self.pending_responses.remove(index))
-        };
-
-        match downstream_pending {
-            Some(mut pending) => match pending.state {
-                ReplayReceived(replay) => {
-                    pending.state = RequestMatched {
-                        downstream: request,
-                        replay,
-                    };
-                    let rx = pending.proxy_response.subscribe();
-                    self.pending_responses.push(pending);
-                    Ok(rx)
+        match pending {
+            Some(pending) => match pending {
+                ReceivedRequest::Replay(replay) => {
+                    self.requests.push(ReceivedRequest::Matched(MatchedRequest {
+                        downstream: downstream_request,
+                        replay: replay.request,
+                        response_sender,
+                    }));
+                    replay.replay_lock.unlock();
                 }
-                ResponsePending { response, replay } => {
-                    pending
-                        .proxy_response
-                        .send(Some(response))
-                        .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
-                    let rx = pending.proxy_response.subscribe();
-                    Ok(rx)
-                }
-                _ => {
-                    self.pending_responses.push(pending);
-                    Err(anyhow::anyhow!(
-                        "Replay request already received, request id: {}",
-                        request.request_id
-                    ))
+                request => {
+                    return Err(anyhow::anyhow!("Invalid request state: {:?}", request));
                 }
             },
             None => {
-                let pending = PendingResponse::downstream_received(request);
-                let rx = pending.proxy_response.subscribe();
-                self.pending_responses.push(pending);
-                Ok(rx)
+                self.requests
+                    .push(ReceivedRequest::Downstream(DownstreamRequest {
+                        request: downstream_request,
+                        response_sender,
+                    }));
             }
-        }
+        };
+        Ok(())
     }
 
-    fn add_response(
+    fn resolve_pending_request(
         &mut self,
         response: HttpResponseEvent,
-    ) -> Result<watch::Receiver<Option<HttpResponseEvent>>, anyhow::Error> {
-        use self::PendingResponseState::*;
-
-        let pending = {
-            let downstream_index = self
-                .pending_responses
-                .iter()
-                .position(|pending| pending.match_response(&response));
-            downstream_index.map(|index| self.pending_responses.remove(index))
-        };
+    ) -> Result<(), anyhow::Error> {
+        let pending = self
+            .requests
+            .iter_mut()
+            .position(|pending| pending.matches_response(&response))
+            .map(|index| self.requests.remove(index));
 
         match pending {
-            Some(mut pending) => match pending.state {
-                ReplayReceived(replay) => {
-                    pending.state = ResponsePending { response, replay };
-                    let rx = pending.proxy_response.subscribe();
-                    self.pending_responses.push(pending);
-                    Ok(rx)
+            Some(pending) => match pending {
+                ReceivedRequest::Matched(matched) => {
+                    matched.response_sender.send(response)?;
+                    Ok(())
                 }
-                RequestMatched { downstream, replay } => {
-                    pending
-                        .proxy_response
-                        .send(Some(response))
-                        .map_err(|_| anyhow::anyhow!("Failed to send response"))?;
-                    let rx = pending.proxy_response.subscribe();
-                    Ok(rx)
-                }
-                _ => Err(anyhow::anyhow!(
-                    "Response already received, response id: {}",
-                    response.request_id
-                )),
+                request => Err(anyhow::anyhow!("Invalid request state: {:?}", request)),
             },
             None => Err(anyhow::anyhow!(
-                "A replay request should have been received already for response id: {}",
-                response.request_id
+                "Response not matching with previous replay request: {:?}",
+                response
             )),
         }
     }
 }
 
 #[derive(Debug)]
-struct PendingResponse {
-    state: PendingResponseState,
-    proxy_response: watch::Sender<Option<HttpResponseEvent>>,
+enum ReceivedRequest {
+    Replay(ReplayRequest),
+    Downstream(DownstreamRequest),
+    Matched(MatchedRequest),
 }
 
-impl PendingResponse {
-    fn new(
-        state: PendingResponseState,
-        proxy_response: watch::Sender<Option<HttpResponseEvent>>,
-    ) -> Self {
-        Self {
-            state,
-            proxy_response,
+impl ReceivedRequest {
+    fn matches_replay(&self, downstream_request: &HttpRequestEvent) -> bool {
+        match &self {
+            Self::Replay(replay) => replay.request.matches(downstream_request),
+            _ => false,
         }
     }
 
-    fn replay_received(request: HttpRequestEvent) -> Self {
-        let (tx, _rx) = watch::channel(None);
-        Self::new(PendingResponseState::ReplayReceived(request), tx)
-    }
-
-    fn downstream_received(request: HttpRequestEvent) -> Self {
-        let (tx, _rx) = watch::channel(None);
-        Self::new(PendingResponseState::DownstreamReceived(request), tx)
-    }
-
-    fn match_downstream_request(&self, request: &HttpRequestEvent) -> bool {
-        use self::PendingResponseState::*;
-        match &self.state {
-            DownstreamReceived(downstream) => downstream.request_id == request.request_id,
-            ReplayReceived(replay) => replay.matches(request),
-            ResponsePending { response, replay } => replay.matches(request),
-            RequestMatched { downstream, replay } => {
-                downstream.request_id == request.request_id && replay.matches(request)
-            }
+    fn matches_downstream(&self, replay_request: &HttpRequestEvent) -> bool {
+        match &self {
+            Self::Downstream(downstream) => downstream.request.matches(replay_request),
+            _ => false,
         }
     }
 
-    fn match_replay_request(&self, request: &HttpRequestEvent) -> bool {
-        use self::PendingResponseState::*;
-        match &self.state {
-            DownstreamReceived(downstream) => downstream.matches(request),
-            ReplayReceived(replay) => replay.request_id == request.request_id,
-            ResponsePending { response, replay } => replay.request_id == request.request_id,
-            RequestMatched { downstream, replay } => {
-                replay.request_id == request.request_id && downstream.matches(request)
-            }
-        }
-    }
-
-    fn match_response(&self, response: &HttpResponseEvent) -> bool {
-        use self::PendingResponseState::*;
-        match &self.state {
-            ReplayReceived(replay) => replay.request_id == response.request_id,
-            ResponsePending {
-                response: pending_response,
-                replay,
-            } => pending_response.request_id == response.request_id,
-            RequestMatched { downstream, replay } => replay.request_id == response.request_id,
-            DownstreamReceived(..) => false,
+    fn matches_response(&self, response: &HttpResponseEvent) -> bool {
+        match &self {
+            Self::Replay(replay) => replay.request.request_id == response.request_id,
+            Self::Matched(matched) => matched.replay.request_id == response.request_id,
+            _ => false,
         }
     }
 }
 
 #[derive(Debug)]
-enum PendingResponseState {
-    ReplayReceived(HttpRequestEvent),
-    DownstreamReceived(HttpRequestEvent),
-    RequestMatched {
-        downstream: HttpRequestEvent,
-        replay: HttpRequestEvent,
-    },
-    ResponsePending {
-        response: HttpResponseEvent,
-        replay: HttpRequestEvent,
-    },
+struct ReplayRequest {
+    request: HttpRequestEvent,
+    replay_lock: ReplayLockHolder,
 }
+
+#[derive(Debug)]
+struct DownstreamRequest {
+    request: HttpRequestEvent,
+    response_sender: ResponseSender<HttpResponseEvent>,
+}
+
+#[derive(Debug)]
+struct MatchedRequest {
+    downstream: HttpRequestEvent,
+    replay: HttpRequestEvent,
+    response_sender: ResponseSender<HttpResponseEvent>,
+}
+
+// ------------------------------------------------------------
 
 pub trait HttpMacawReplaySetup {
     fn add_http_proxy(

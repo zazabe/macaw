@@ -1,18 +1,18 @@
 use crate::lib::*;
 
-pub struct ProxyReplayerActor<P: Proxy> {
+pub struct ProxyReplayerActor<P: ProxyReplayer> {
     proxy: P,
 }
 
-impl<P: Proxy> ProxyReplayerActor<P> {
+impl<P: ProxyReplayer> ProxyReplayerActor<P> {
     pub fn new(proxy: P) -> Self {
         Self { proxy }
     }
 }
 
-impl<P: Proxy> Actor for ProxyReplayerActor<P> {}
+impl<P: ProxyReplayer> Actor for ProxyReplayerActor<P> {}
 
-impl<P: Proxy> ProxyActor for ProxyReplayerActor<P> {
+impl<P: ProxyReplayer> ProxyActor for ProxyReplayerActor<P> {
     fn id(&self) -> ProxyId {
         self.proxy.id()
     }
@@ -21,59 +21,85 @@ impl<P: Proxy> ProxyActor for ProxyReplayerActor<P> {
 /// Handle recorded events, processing them through ProxyHandler trait.
 /// The replayer actor blocks the flow until a reply is received, allowing to wait
 /// for the downstream incoming message (request) to be received and match the expected request.
-impl<P: Proxy> ActorHandler<Record> for ProxyReplayerActor<P> {
-    type Reply = Result<(), anyhow::Error>;
+impl<P: ProxyReplayer> ActorHandler<RecordedEventWithLock> for ProxyReplayerActor<P> {
+    type Reply = ();
 
-    async fn handle(&mut self, msg: Record) -> Self::Reply {
-        self.handle_event(msg.event).await
+    async fn handle(&mut self, event: RecordedEventWithLock) -> Self::Reply {
+        let RecordedEventWithLock {
+            event, replay_lock, ..
+        } = event;
+        if let Err(e) = self.handle_event(event, replay_lock).await {
+            error!("Failed to handle recorded event: {:?}", e);
+        }
     }
 }
 
 /// Handle downstream incoming messages.
 /// The proxy implements the logic to match request/response.
 /// Optionally, returns the response received from the replayer actor. (e.g. for HTTP proxy).
-impl<P: Proxy> ActorHandler<DownstreamMessage<P>> for ProxyReplayerActor<P> {
-    type Reply = Option<P::OutgoingMessage>;
+impl<P: ProxyReplayer>
+    ActorHandler<
+        DownstreamMessageWithResponseSender<
+            P::DownstreamIncomingMessage,
+            P::DownstreamOutgoingMessage,
+        >,
+    > for ProxyReplayerActor<P>
+{
+    type Reply = ();
 
-    async fn handle(&mut self, msg: DownstreamMessage<P>) -> Self::Reply {
-        debug!("Handling downstream message: {:?}", msg);
-        match self.handle_downstream_incoming(msg.into_inner()).await {
-            Err(e) => {
-                error!("Failed to handle downstream incoming message: {}", e);
-                None
-            }
-            Ok(response) => response,
+    async fn handle(
+        &mut self,
+        downstream: DownstreamMessageWithResponseSender<
+            P::DownstreamIncomingMessage,
+            P::DownstreamOutgoingMessage,
+        >,
+    ) -> Self::Reply {
+        let DownstreamMessageWithResponseSender {
+            message,
+            response_sender,
+        } = downstream;
+        if let Err(e) = self
+            .handle_downstream_incoming(message, response_sender)
+            .await
+        {
+            error!("Failed to handle downstream incoming message: {:?}", e);
         }
     }
 }
 
-impl<P: Proxy> ProxyReplayerActor<P> {
-    async fn handle_event(&mut self, event: Box<dyn RecordEvent>) -> Result<(), anyhow::Error>
-    where
-        Recorder: ActorHandler<Record, Reply = ()>,
-    {
-        let message = <<P as ProxyHandler>::Message as RecordEventUntagged>::downcast(event)
-            .map_err(|_| anyhow::anyhow!("Unexpected event"))?;
-        debug!("Handling downstream message: {:?}", message);
-        self.proxy.handle_message(message).await?;
+impl<P: ProxyReplayer> ProxyReplayerActor<P> {
+    async fn handle_event(
+        &mut self,
+        event: Box<dyn RecordEvent>,
+        replay_lock: ReplayLockHolder,
+    ) -> Result<(), anyhow::Error> {
+        let message =
+            P::RecordedMessage::downcast(event).map_err(|_| anyhow::anyhow!("Unexpected event"))?;
+
+        debug!(
+            "ProxyReplayerActor - Handling downstream message: {:?}",
+            message
+        );
+        self.proxy
+            .handle_recorded_message(message, replay_lock)
+            .await?;
         Ok(())
     }
 
     async fn handle_downstream_incoming(
         &mut self,
-        msg: <P as ProxyDownstream>::IncomingMessage,
-    ) -> Result<Option<P::OutgoingMessage>, anyhow::Error>
-    where
-        Recorder: ActorHandler<Record, Reply = ()>,
-    {
+        msg: P::DownstreamIncomingMessage,
+        response_sender: ResponseSender<P::DownstreamOutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        debug!(
+            "ProxyReplayerActor - Handling downstream incoming message: {:?}",
+            msg
+        );
         let request = self.proxy.downstream_incoming_redact(msg).await?;
-        let response = self.proxy.downstream_incoming_process(request).await?;
-        match response {
-            Some(response) => {
-                let response = self.proxy.downstream_outgoing_redact(response).await?;
-                Ok(Some(response))
-            }
-            None => Ok(None),
-        }
+
+        self.proxy
+            .downstream_incoming_process(request, response_sender)
+            .await?;
+        Ok(())
     }
 }

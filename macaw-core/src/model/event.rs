@@ -4,16 +4,33 @@ use std::any::Any;
 
 /// Message wrapping a `RecordEvent` associated with a specific proxy.
 #[derive(Debug)]
-pub struct Record {
+pub struct RecordedEvent {
     pub proxy_id: ProxyId,
     pub event: Box<dyn RecordEvent>,
 }
 
-impl Record {
+impl RecordedEvent {
     pub fn new<E: RecordEvent>(proxy_id: ProxyId, event: E) -> Self {
         Self {
             proxy_id,
             event: Box::new(event),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct RecordedEventWithLock {
+    pub proxy_id: ProxyId,
+    pub event: Box<dyn RecordEvent>,
+    pub replay_lock: ReplayLockHolder,
+}
+
+impl RecordedEventWithLock {
+    pub fn new<E: RecordEvent>(proxy_id: ProxyId, event: E, replay_lock: ReplayLockHolder) -> Self {
+        Self {
+            proxy_id,
+            event: Box::new(event),
+            replay_lock,
         }
     }
 }

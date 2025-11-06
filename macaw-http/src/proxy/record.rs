@@ -8,35 +8,14 @@ pub(crate) struct HttpRecordProxy {
     downstream: HttpServer,
 }
 
-impl Proxy for HttpRecordProxy {
+impl ProxyRecorder for HttpRecordProxy {
+    type DownstreamIncomingMessage = HttpRequestEvent;
+    type DownstreamOutgoingMessage = HttpResponseEvent;
+    type UpstreamIncomingMessage = UnexpectedEvent;
+
     fn id(&self) -> ProxyId {
         self.id
     }
-}
-
-impl HttpRecordProxy {
-    pub(crate) async fn new(
-        proxy_id: ProxyId,
-        addr: SocketAddr,
-        target_url: TargetUrl,
-        sender: Box<dyn HttpServerRequestSender>,
-    ) -> Result<Self, anyhow::Error> {
-        let upstream = HttpClient::new(addr)?;
-        let mut downstream = HttpServer::new(addr, sender);
-        downstream.start().await?;
-
-        Ok(Self {
-            id: proxy_id,
-            target_url,
-            upstream,
-            downstream,
-        })
-    }
-}
-
-impl ProxyDownstream for HttpRecordProxy {
-    type IncomingMessage = HttpRequestEvent;
-    type OutgoingMessage = HttpResponseEvent;
 
     async fn downstream_incoming_process(
         &mut self,
@@ -52,13 +31,27 @@ impl ProxyDownstream for HttpRecordProxy {
     }
 }
 
-impl ProxyUpstream for HttpRecordProxy {
-    type IncomingMessage = UnexpectedEvent;
+impl HttpRecordProxy {
+    pub(crate) async fn new(
+        proxy_id: ProxyId,
+        addr: SocketAddr,
+        target_url: TargetUrl,
+        sender: Box<dyn HttpServerRequestResolver>,
+    ) -> Result<Self, anyhow::Error> {
+        let upstream = HttpClient::new(addr)?;
+        let mut downstream = HttpServer::new(addr, sender);
+        downstream.start().await?;
+
+        Ok(Self {
+            id: proxy_id,
+            target_url,
+            upstream,
+            downstream,
+        })
+    }
 }
 
-impl ProxyHandler for HttpRecordProxy {
-    type Message = UnexpectedEvent;
-}
+// ------------------------------------------------------------
 
 pub trait HttpMacawRecordSetup {
     fn add_http_proxy(

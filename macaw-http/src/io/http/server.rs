@@ -6,29 +6,29 @@ use hyper::service::Service;
 use crate::lib::*;
 
 #[dyn_clonable::clonable]
-pub(crate) trait HttpServerRequestSender: Send + Sync + Clone + 'static {
-    fn send<'a>(
+pub(crate) trait HttpServerRequestResolver: Send + Sync + Clone + 'static {
+    fn resolve_request<'a>(
         &'a self,
         envelope: HttpRequest,
     ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, anyhow::Error>> + Send + 'a>>;
 }
 
-impl fmt::Debug for Box<dyn HttpServerRequestSender> {
+impl fmt::Debug for Box<dyn HttpServerRequestResolver> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HttpServerSender")
+        write!(f, "HttpServerRequestResolver")
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct HttpServer {
     addr: SocketAddr,
-    sender: Box<dyn HttpServerRequestSender>,
+    sender: Box<dyn HttpServerRequestResolver>,
     local_addr: Option<SocketAddr>,
     task: Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>,
 }
 
 impl HttpServer {
-    pub(crate) fn new(addr: SocketAddr, sender: Box<dyn HttpServerRequestSender>) -> Self {
+    pub(crate) fn new(addr: SocketAddr, sender: Box<dyn HttpServerRequestResolver>) -> Self {
         Self {
             addr,
             sender,
@@ -70,7 +70,7 @@ impl HttpServer {
 
 #[derive(Debug, Clone)]
 struct RequestHandlerService {
-    sender: Box<dyn HttpServerRequestSender>,
+    sender: Box<dyn HttpServerRequestResolver>,
 }
 
 impl Service<http::Request<Incoming>> for RequestHandlerService {
@@ -88,7 +88,7 @@ impl Service<http::Request<Incoming>> for RequestHandlerService {
             let request = http::Request::from_parts(parts, BodyBytes::new(bytes));
             debug!("Received request: {:?}", request);
             let response = sender
-                .send(request)
+                .resolve_request(request)
                 .await
                 .map_err(|_| anyhow::anyhow!("Request channel closed"))?;
             Ok(response)

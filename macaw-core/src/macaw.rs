@@ -65,7 +65,7 @@ impl Macaw<Replayer> {
         tx: ActorChannelSender<P>,
     ) -> Result<(), anyhow::Error>
     where
-        P: ProxyActor + ActorHandler<Record, Reply = Result<(), anyhow::Error>>,
+        P: ProxyActor + ActorHandler<RecordedEventWithLock, Reply = ()>,
     {
         let proxy_id = proxy.id();
         let handle = proxy.run_with_channel(&self.context, tx, rx);

@@ -3,15 +3,15 @@ use crate::lib::*;
 #[derive(Debug)]
 pub(crate) enum ReplayerCommand {
     Play,
-    RegisterProxy(ProxyId, ProxyRequester),
+    RegisterProxy(ProxyId, ProxySender),
 }
 
-type ProxyRequester = Box<dyn ActorRequester<Record, Result<(), anyhow::Error>>>;
+type ProxySender = Box<dyn ActorSender<RecordedEventWithLock>>;
 
 #[derive(Debug)]
 pub struct Replayer {
     events: EventStore,
-    proxies: HashMap<ProxyId, ProxyRequester>,
+    proxies: HashMap<ProxyId, ProxySender>,
 }
 
 impl Replayer {
@@ -45,17 +45,17 @@ impl Replayer {
     async fn play(&mut self) -> Result<(), anyhow::Error> {
         while let Some(event) = self.events.next() {
             let Event { proxy_id, data, .. } = event;
+            let (replay_lock_holder, replay_lock) = lock_channel();
             let proxy = self
                 .proxies
                 .get(&proxy_id)
                 .ok_or(anyhow::anyhow!("Proxy not found"))?;
-            proxy
-                .request(Record {
-                    proxy_id,
-                    event: data,
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to send event to proxy: {}", e))??;
+            proxy.send(RecordedEventWithLock {
+                proxy_id,
+                event: data,
+                replay_lock: replay_lock_holder,
+            })?;
+            replay_lock.wait().await;
         }
         Ok(())
     }
