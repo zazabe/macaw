@@ -2,34 +2,44 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "run",
+            "label": "run recorder",
             "type": "cargo",
             "command": "run",
+            "args": [
+                "--example",
+                "recorder"
+            ],
             "options": {
                 "env": {
-                    "RUST_LOG": "debug"
+                    "RUST_LOG": "debug",
+                    "RUST_BACKTRACE": "1",
                 }
-            }
+            },
+        },
+        {
+            "label": "run replayer",
+            "type": "cargo",
+            "command": "run",
+            "args": [
+                "--example",
+                "replayer"
+            ],
+            "options": {
+                "env": {
+                    "RUST_LOG": "debug",
+                    "RUST_BACKTRACE": "1",
+                }
+            },
         },
         {
             "label": "test",
             "type": "cargo",
             "command": "test",
-            "options": {
-                "env": {
-                    "RUST_LOG": "debug"
-                }
-            }
         },
         {
             "label": "clippy",
             "type": "cargo",
             "command": "clippy",
-            "options": {
-                "env": {
-                    "RUST_LOG": "debug"
-                }
-            }
         },
     ]
 }
