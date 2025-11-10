@@ -14,7 +14,7 @@ pub mod prelude {
 }
 
 pub(crate) mod lib {
-    pub(crate) use anyhow::Result;
+    pub(crate) use anyhow::{Result, anyhow};
     pub(crate) use async_stream::stream;
     pub(crate) use bytes::Bytes;
     pub(crate) use chrono::{DateTime, Utc};
@@ -30,7 +30,9 @@ pub(crate) mod lib {
     pub(crate) use std::task::{Context, Poll};
     pub(crate) use std::time::{Duration, Instant};
     pub(crate) use std::{collections::HashMap, pin::Pin};
-    pub(crate) use tokio::sync::{mpsc, oneshot};
+    pub(crate) use thiserror::Error;
+
+    pub(crate) use tokio::sync::{mpsc, oneshot, watch};
     pub(crate) use tracing::{debug, error, info, warn};
     pub(crate) use uuid::Uuid;
 

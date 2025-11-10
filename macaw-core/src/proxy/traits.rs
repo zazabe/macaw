@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{borrow::Cow, marker::PhantomData};
 
 use crate::lib::*;
 use arrayvec::ArrayString;
@@ -17,6 +17,16 @@ impl ProxyId {
 
     pub fn named(name: &str) -> Result<Self, anyhow::Error> {
         Ok(Self::Named(ArrayString::from_str(name)?))
+    }
+}
+
+impl fmt::Display for ProxyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Uuid(uuid) => Cow::Owned(uuid.simple().to_string()),
+            Self::Named(name) => Cow::Borrowed(name.as_str()),
+        };
+        write!(f, "proxy:{}", name.as_ref())
     }
 }
 
@@ -58,7 +68,7 @@ pub struct UpstreamMessage<M> {
     pub(crate) message: M,
 }
 
-/// ------------------------------------------------------------
+// ------------------------------------------------------------
 
 pub trait ProxyRecorder: Send + 'static {
     type DownstreamIncomingMessage: RecordEvent + Clone;
@@ -126,8 +136,8 @@ pub trait ProxyReplayer: Send + 'static {
         future::err(anyhow::anyhow!("Unexpected downstream message"))
     }
 
-    fn handle_recorded_message<'a>(
-        &'a mut self,
+    fn handle_recorded_message(
+        &mut self,
         message: Self::RecordedMessage,
         replay_lock: ReplayLockHolder,
     ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;

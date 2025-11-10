@@ -7,12 +7,22 @@ use macaw::http::*;
 async fn main() -> Result<(), anyhow::Error> {
     unsafe { std::env::set_var("RUST_LOG", "debug") };
     tracing_subscriber::fmt::init();
-    let mut macaw = Macaw::recorder();
+    let mut context = AppContext::new();
+
+    tokio::spawn({
+        let mut context = context.clone();
+        async move {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            context.exit();
+        }
+    });
+
+    let mut macaw = Macaw::recorder(context.clone());
     macaw
         .add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
         .await?;
-
-    tokio::time::sleep(Duration::from_secs(10)).await;
     macaw.record(PathBuf::from("./data/record.yaml")).await?;
+
+    context.wait_until_stopped().await;
     Ok(())
 }

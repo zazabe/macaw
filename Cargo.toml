@@ -32,7 +32,7 @@ serde = { version = "1", features = [ "derive" ] }
 serde_json = "1"
 serde_yaml = "0.9"
 structopt = "0.3"
-tokio = { version = "1", features = [ "full" ] }
+tokio = { version = "1", features = [ "full", "tracing" ] }
 tokio-tungstenite = { version = "0.28", features = [ "url", "rustls-tls-native-roots" ] }
 tokio-stream = { version = "0.1", features = [ "full" ] }
 tracing = "*"
@@ -41,6 +41,7 @@ typetag = "0.2.21"
 url = "2.5.2"
 uuid = { version = "1.13", features = [ "v4", "serde" ] }
 take_mut = "0.2"
+thiserror = "2"
 
 [workspace.lints.rust]
 dead_code = "allow"

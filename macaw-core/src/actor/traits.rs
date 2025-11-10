@@ -15,22 +15,31 @@ pub trait Actor: Send + Sized + 'static {
         futures::future::ready(())
     }
 
+    fn on_error(&mut self, context: &ActorContext, error: anyhow::Error) {
+        context.exit_with_error(error);
+    }
+
     fn run_with_channel(
         self,
+        name: &str,
         context: &ActorContext,
         tx: ActorChannelSender<Self>,
         rx: ActorChannelReceiver<Self>,
     ) -> ActorHandle<Self> {
-        tokio::spawn(RunActorFuture::new(self, rx, context.clone()));
+        let task =
+            tokio::task::Builder::new()
+                .name(name)
+                .spawn(run_actor(self, rx, context.clone()));
+
         ActorHandle {
             tx,
             context: context.clone(),
         }
     }
 
-    fn run(self, context: &ActorContext) -> ActorHandle<Self> {
+    fn run(self, name: &str, context: &ActorContext) -> ActorHandle<Self> {
         let (tx, rx) = actor_channel::<Self>();
-        self.run_with_channel(context, tx, rx)
+        self.run_with_channel(name, context, tx, rx)
     }
 }
 
@@ -46,25 +55,65 @@ where
 // ------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub struct ActorContext {
-    terminate: TaskTerminator,
+pub struct AppContext {
+    terminate: AppTerminator,
 }
 
-impl ActorContext {
+impl AppContext {
     pub fn new() -> Self {
         Self {
-            terminate: TaskTerminator::new(),
+            terminate: AppTerminator::new(),
         }
     }
 
-    pub fn stop(&self) {
-        self.terminate.stop();
+    pub fn actor_context(&self) -> ActorContext {
+        ActorContext::new(self.terminate.clone())
+    }
+
+    pub fn exit(&mut self) {
+        self.terminate.exit();
+    }
+
+    pub fn exit_with_error(&mut self, error: anyhow::Error) {
+        self.terminate.exit_with_error(error);
+    }
+
+    pub async fn wait_until_stopped(&mut self) {
+        self.terminate.wait_until_stopped().await;
     }
 }
 
-impl Default for ActorContext {
+impl Default for AppContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ActorContext {
+    app_terminator: AppTerminator,
+    task_terminator: TaskTerminator,
+}
+
+impl ActorContext {
+    fn new(app_terminator: AppTerminator) -> Self {
+        Self {
+            app_terminator,
+            task_terminator: TaskTerminator::new(),
+        }
+    }
+    pub fn exit(&self) {
+        self.app_terminator.exit();
+    }
+
+    pub fn exit_with_error(&self, error: anyhow::Error) {
+        self.app_terminator.exit_with_error(error);
+    }
+
+    pub fn stop(&self) {
+        self.task_terminator.stop();
     }
 }
 
@@ -111,7 +160,7 @@ where
 
 impl<A: Actor> ErasedActorHandle for ActorHandle<A> {
     fn stop(&self) {
-        self.context.terminate.stop();
+        self.context.task_terminator.stop();
     }
 }
 
@@ -126,57 +175,42 @@ impl<A: Actor> Clone for ActorHandle<A> {
 
 // ------------------------------------------------------------
 
-pin_project! {
-    pub struct RunActorFuture {
-        #[pin]
-        fut: Pin<Box<dyn Future<Output = ()> + Send >>,
-    }
-}
-
-impl RunActorFuture {
-    fn new<A>(
-        mut actor: A,
-        mut message_rx: ActorChannelReceiver<A>,
-        mut context: ActorContext,
-    ) -> Self
-    where
-        A: Actor + 'static,
-    {
-        let fut = Box::pin(async move {
-            actor.on_start(&context).await;
-            loop {
-                if context.terminate.is_stopped() {
-                    break;
-                }
-                futures::select! {
-                    message = message_rx.recv().fuse() => match message {
-                        Ok(message) => {
-                            if let Err(e) = message.into_inner().handle_with_actor(&mut actor).await {
-                                error!("Failed to handle message: {}", e);
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to receive message: {}", e);
-                            break;
-                        }
-                    },
-
-                    _ = context.terminate.wait().fuse() => {
+async fn run_actor<A>(
+    mut actor: A,
+    mut message_rx: ActorChannelReceiver<A>,
+    mut context: ActorContext,
+) -> Result<(), anyhow::Error>
+where
+    A: Actor + 'static,
+{
+    actor.on_start(&context).await;
+    loop {
+        if context.task_terminator.is_stopped() {
+            break;
+        }
+        futures::select! {
+            message = message_rx.recv().fuse() => match message {
+                Ok(message) => {
+                    if let Err(e) = message.into_inner().handle_with_actor(&mut actor).await {
+                        actor.on_error(&context, e);
                         break;
                     }
                 }
+                Err(e) => {
+                    actor.on_error(&context, e);
+                    break;
+                }
+            },
+
+            _ = context.task_terminator.wait().fuse() => {
+                break;
             }
-            actor.on_stop(&context).await;
-        });
-        Self { fut }
-    }
-}
 
-impl Future for RunActorFuture {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().fut.poll(cx)
+            _ = context.app_terminator.wait_until_stopped().fuse() => {
+                break;
+            }
+        }
     }
+    actor.on_stop(&context).await;
+    Ok(())
 }

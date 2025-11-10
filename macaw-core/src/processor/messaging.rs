@@ -35,7 +35,7 @@ impl<T> ResponseSender<T> {
     }
 }
 
-/// ------------------------------------------------------------
+// ------------------------------------------------------------
 
 /// Channel to lock the replay of recordings, allowing to unlock it later or when dropping the lock.
 pub(crate) fn lock_channel() -> (ReplayLockHolder, ReplayLock) {

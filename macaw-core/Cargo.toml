@@ -33,3 +33,4 @@ tokio-stream.workspace = true
 tracing.workspace = true
 typetag.workspace = true
 uuid.workspace = true
+thiserror.workspace = true
