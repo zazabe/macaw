@@ -7,12 +7,14 @@ pub(crate) enum RecorderCommand {
 
 #[derive(Debug)]
 pub struct Recorder {
+    context: ActorContext,
     pub(crate) events: EventStore,
 }
 
 impl Recorder {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(context: ActorContext) -> Self {
         Self {
+            context,
             events: EventStore::new(),
         }
     }
@@ -20,16 +22,23 @@ impl Recorder {
 
 impl Processor for Recorder {}
 
-impl Actor for Recorder {}
+impl Actor for Recorder {
+    fn name(&self) -> &str {
+        "macaw:recorder"
+    }
+}
 
 impl ActorHandler<RecorderCommand> for Recorder {
-    type Reply = Result<(), anyhow::Error>;
+    type Reply = ();
 
-    async fn handle(&mut self, request: RecorderCommand) -> Result<(), anyhow::Error> {
+    async fn handle(&mut self, request: RecorderCommand) {
         match request {
-            RecorderCommand::WriteToFile(path) => self.events.save_file(path).await?,
+            RecorderCommand::WriteToFile(path) => {
+                if let Err(e) = self.events.save_file(path).await {
+                    self.context.exit_with_error(e);
+                }
+            }
         }
-        Ok(())
     }
 }
 
@@ -38,11 +47,5 @@ impl ActorHandler<RecordedEvent> for Recorder {
 
     async fn handle(&mut self, message: RecordedEvent) {
         self.events.push(message.proxy_id, message.event);
-    }
-}
-
-impl Default for Recorder {
-    fn default() -> Self {
-        Self::new()
     }
 }

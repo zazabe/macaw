@@ -2,51 +2,51 @@ use crate::lib::*;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("Exited")]
-    Exit,
     #[error("Exited with error: {0}")]
     ExitWithError(#[from] anyhow::Error),
+    #[error("Bug: Unexpected error: {0}")]
+    UnexpectedError(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// A terminator can be used to signal tasks to terminate.
-#[derive(Debug, Clone)]
+/// Terminator to signal the main application to exit.
+#[derive(Debug)]
 pub struct AppTerminator {
-    tx: watch::Sender<Option<Result<(), AppError>>>,
-    rx: watch::Receiver<Option<Result<(), AppError>>>,
+    tx: mpsc::Sender<Result<(), AppError>>,
+    rx: mpsc::Receiver<Result<(), AppError>>,
+    exit_notifier: Arc<tokio::sync::Notify>,
 }
+
 impl AppTerminator {
     pub fn new() -> Self {
-        let (tx, rx) = watch::channel(None);
-        Self { tx, rx }
+        let (tx, rx) = mpsc::channel(1);
+        let exit_notifier = Arc::new(tokio::sync::Notify::new());
+        Self {
+            tx,
+            rx,
+            exit_notifier,
+        }
     }
 
     pub fn exit(&self) {
-        self.tx.send(Some(Ok(()))).ok();
+        self.tx.try_send(Ok(())).ok();
+        self.exit_notifier.notify_waiters();
     }
 
     pub fn exit_with_error(&self, error: anyhow::Error) {
-        if self.rx.borrow().is_none() {
-            self.tx.send(Some(Err(AppError::ExitWithError(error)))).ok();
-        }
+        self.tx.try_send(Err(error.into())).ok();
+        self.exit_notifier.notify_waiters();
     }
 
-    pub async fn wait_until_stopped(&mut self) {
-        if let Err(e) = self.rx.changed().await {
-            error!("Bug: Failed to wait for app terminator: {}", e);
-            std::process::exit(1);
-        }
+    pub(crate) fn notified(&self) -> ExitNotifier {
+        ExitNotifier::new(self)
+    }
 
-        match &*self.rx.borrow_and_update() {
-            Some(Ok(())) => (),
-            Some(Err(error)) => {
-                error!("App terminated with error: {}", error);
-                std::process::exit(1);
-            }
-            None => {
-                error!("Bug: Application already dropped");
-                std::process::exit(1);
-            }
-        }
+    pub async fn wait_until_stopped(mut self) -> Result<(), AppError> {
+        self.rx
+            .recv()
+            .await
+            .ok_or_else(|| AppError::UnexpectedError("App terminator channel closed".into()))
+            .flatten()
     }
 }
 
@@ -56,7 +56,32 @@ impl Default for AppTerminator {
     }
 }
 
-/// A terminator can be used to signal tasks to terminate.
+// Notifies when the main application exits.
+#[derive(Debug, Clone)]
+pub(crate) struct ExitNotifier {
+    notifier: Arc<tokio::sync::Notify>,
+    tx: mpsc::Sender<Result<(), AppError>>,
+}
+impl ExitNotifier {
+    fn new(app_terminator: &AppTerminator) -> Self {
+        let notifier = Arc::clone(&app_terminator.exit_notifier);
+        let tx = app_terminator.tx.clone();
+        Self { notifier, tx }
+    }
+
+    pub(crate) fn exit(&self) {
+        self.tx.try_send(Ok(())).ok();
+    }
+
+    pub(crate) fn exit_with_error(&self, error: anyhow::Error) {
+        self.tx.try_send(Err(error.into())).ok();
+    }
+    pub(crate) async fn notified(&self) {
+        self.notifier.notified().await
+    }
+}
+
+/// Terminator to signal a specific task to terminate.
 #[derive(Debug, Clone)]
 pub struct TaskTerminator {
     tx: watch::Sender<bool>,

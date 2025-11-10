@@ -12,11 +12,16 @@ type ProxySender = Box<dyn ActorSender<RecordedEventWithLock>>;
 pub struct Replayer {
     events: EventStore,
     proxies: HashMap<ProxyId, ProxySender>,
+    context: ActorContext,
 }
 
 impl Replayer {
-    pub(crate) fn new<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
+    pub(crate) fn new<P: AsRef<Path>>(
+        context: ActorContext,
+        path: P,
+    ) -> Result<Self, anyhow::Error> {
         Ok(Self {
+            context,
             events: EventStore::from_file(path.as_ref())?,
             proxies: HashMap::new(),
         })
@@ -25,19 +30,27 @@ impl Replayer {
 
 impl Processor for Replayer {}
 
-impl Actor for Replayer {}
+impl Actor for Replayer {
+    fn name(&self) -> &str {
+        "macaw:replayer"
+    }
+}
 
 impl ActorHandler<ReplayerCommand> for Replayer {
-    type Reply = Result<(), anyhow::Error>;
+    type Reply = ();
 
-    async fn handle(&mut self, request: ReplayerCommand) -> Result<(), anyhow::Error> {
+    async fn handle(&mut self, request: ReplayerCommand) {
+        debug!("Replayer - Handling command: {:?}", request);
         match request {
-            ReplayerCommand::Play => self.play().await?,
+            ReplayerCommand::Play => {
+                if let Err(e) = self.play().await {
+                    self.context.exit_with_error(e);
+                }
+            }
             ReplayerCommand::RegisterProxy(proxy_id, proxy_sender) => {
                 self.proxies.insert(proxy_id, proxy_sender);
             }
         }
-        Ok(())
     }
 }
 
@@ -46,10 +59,11 @@ impl Replayer {
         while let Some(event) = self.events.next() {
             let Event { proxy_id, data, .. } = event;
             let (replay_lock_holder, replay_lock) = lock_channel();
-            let proxy = self
-                .proxies
-                .get(&proxy_id)
-                .ok_or(anyhow::anyhow!("Proxy not found"))?;
+            let proxy = self.proxies.get(&proxy_id).ok_or(anyhow::anyhow!(
+                "Proxy {:?} not found in {:?}",
+                proxy_id,
+                self.proxies
+            ))?;
             proxy.send(RecordedEventWithLock {
                 proxy_id,
                 event: data,
@@ -57,6 +71,8 @@ impl Replayer {
             })?;
             replay_lock.wait().await;
         }
+        self.context.stop();
+        self.context.exit();
         Ok(())
     }
 }

@@ -1,17 +1,27 @@
 use crate::lib::*;
 
 pub struct ProxyRecorderActor<P: ProxyRecorder> {
+    name: String,
     proxy: P,
     recorder: ActorHandle<Recorder>,
 }
 
 impl<P: ProxyRecorder> ProxyRecorderActor<P> {
     pub fn new(proxy: P, recorder: ActorHandle<Recorder>) -> Self {
-        Self { proxy, recorder }
+        let name = format!("macaw:recorder:proxy:{}", proxy.id());
+        Self {
+            name,
+            proxy,
+            recorder,
+        }
     }
 }
 
-impl<P: ProxyRecorder> Actor for ProxyRecorderActor<P> {}
+impl<P: ProxyRecorder> Actor for ProxyRecorderActor<P> {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 
 impl<P: ProxyRecorder> ProxyActor for ProxyRecorderActor<P> {
     fn id(&self) -> ProxyId {

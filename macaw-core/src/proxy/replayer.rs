@@ -1,16 +1,22 @@
 use crate::lib::*;
 
 pub struct ProxyReplayerActor<P: ProxyReplayer> {
+    name: String,
     proxy: P,
 }
 
 impl<P: ProxyReplayer> ProxyReplayerActor<P> {
     pub fn new(proxy: P) -> Self {
-        Self { proxy }
+        let name = format!("macaw:replayer:proxy:{}", proxy.id());
+        Self { name, proxy }
     }
 }
 
-impl<P: ProxyReplayer> Actor for ProxyReplayerActor<P> {}
+impl<P: ProxyReplayer> Actor for ProxyReplayerActor<P> {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 
 impl<P: ProxyReplayer> ProxyActor for ProxyReplayerActor<P> {
     fn id(&self) -> ProxyId {

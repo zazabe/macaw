@@ -7,18 +7,17 @@ pub trait ProxyActor: Actor {
 }
 
 pub struct Macaw<P: Processor> {
-    app_context: AppContext,
+    actor_context: ActorContext,
     processor: ActorHandle<P>,
     proxies: Vec<Box<dyn ErasedActorHandle>>,
 }
 
 impl Macaw<Recorder> {
-    pub fn recorder(app_context: AppContext) -> Self {
-        let actor_context = app_context.actor_context();
-        let processor = Recorder::new();
-        let handle = processor.run("macaw:recorder", &actor_context);
+    pub fn recorder(actor_context: ActorContext) -> Self {
+        let processor = Recorder::new(actor_context.clone());
+        let handle = processor.run(&actor_context);
         Self {
-            app_context,
+            actor_context,
             processor: handle,
             proxies: Vec::new(),
         }
@@ -27,7 +26,8 @@ impl Macaw<Recorder> {
     pub async fn record(self, path: PathBuf) -> Result<(), anyhow::Error> {
         self.processor
             .request(RecorderCommand::WriteToFile(path))
-            .await?
+            .await?;
+        Ok(())
     }
 
     pub fn add_proxy_with_channel<P: ProxyActor>(
@@ -37,9 +37,8 @@ impl Macaw<Recorder> {
         tx: ActorChannelSender<P>,
     ) -> Result<(), anyhow::Error> {
         let proxy_id = proxy.id();
-        let proxy_name = proxy_id.to_string();
-        let actor_context = self.app_context.actor_context();
-        let handle = proxy.run_with_channel(&proxy_name, &actor_context, tx, rx);
+        let actor_context = self.actor_context.create_child();
+        let handle = proxy.run_with_channel(&actor_context, tx, rx);
         self.proxies.push(Box::new(handle));
         Ok(())
     }
@@ -47,21 +46,20 @@ impl Macaw<Recorder> {
 
 impl Macaw<Replayer> {
     pub fn replayer<P: AsRef<Path>>(
-        app_context: AppContext,
+        actor_context: ActorContext,
         path: P,
     ) -> Result<Self, anyhow::Error> {
-        let actor_context = app_context.actor_context();
-        let processor = Replayer::new(path)?;
-        let handle = processor.run("macaw:replayer", &actor_context);
+        let processor = Replayer::new(actor_context.clone(), path)?;
+        let handle = processor.run(&actor_context);
         Ok(Self {
-            app_context,
+            actor_context,
             processor: handle,
             proxies: Vec::new(),
         })
     }
 
-    pub async fn play(self) -> Result<(), anyhow::Error> {
-        self.processor.request(ReplayerCommand::Play).await?
+    pub fn play(&self) -> Result<(), anyhow::Error> {
+        self.processor.send(ReplayerCommand::Play)
     }
 
     pub async fn add_proxy_with_channel<P>(
@@ -74,10 +72,13 @@ impl Macaw<Replayer> {
         P: ProxyActor + ActorHandler<RecordedEventWithLock, Reply = ()>,
     {
         let proxy_id = proxy.id();
-        let proxy_name = proxy_id.to_string();
-        let actor_context = self.app_context.actor_context();
-        let handle = proxy.run_with_channel(&proxy_name, &actor_context, tx, rx);
+        let proxy_sender = Box::new(tx.clone());
+        let actor_context = self.actor_context.create_child();
+        let handle = proxy.run_with_channel(&actor_context, tx, rx);
         self.proxies.push(Box::new(handle));
+        self.processor
+            .request(ReplayerCommand::RegisterProxy(proxy_id, proxy_sender))
+            .await?;
         Ok(())
     }
 }

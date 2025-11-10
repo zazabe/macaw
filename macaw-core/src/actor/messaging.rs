@@ -8,7 +8,6 @@ pub trait ActorMessage: fmt::Debug + Send + 'static {}
 
 impl<T> ActorMessage for T where T: fmt::Debug + Send + 'static {}
 
-#[derive(Debug)]
 pub(crate) struct Envelope<A>(Box<dyn EnvelopeMessageTrait<Actor = A> + Send>)
 where
     A: Actor;
@@ -43,6 +42,15 @@ where
 
     pub(crate) fn into_inner(self) -> Box<dyn EnvelopeMessageTrait<Actor = A> + Send> {
         self.0
+    }
+}
+
+impl<A> fmt::Debug for Envelope<A>
+where
+    A: Actor,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Envelope<{}>", std::any::type_name::<A>())
     }
 }
 
@@ -149,7 +157,7 @@ where
     fn send(&self, message: M) -> Result<(), anyhow::Error> {
         self.0
             .send(Envelope::new_message(message))
-            .map_err(|e| anyhow::anyhow!("Failed to send envelope: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to send envelope: {:?}, error: {}", e.0, e))?;
         Ok(())
     }
 }
