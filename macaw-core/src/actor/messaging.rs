@@ -157,7 +157,7 @@ where
     fn send(&self, message: M) -> Result<(), anyhow::Error> {
         self.0
             .send(Envelope::new_message(message))
-            .map_err(|e| anyhow::anyhow!("Failed to send envelope: {:?}, error: {}", e.0, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to send message, error: {}", e))?;
         Ok(())
     }
 }
@@ -196,11 +196,11 @@ where
         message: M,
     ) -> Pin<Box<dyn Future<Output = Result<R, anyhow::Error>> + Send + 'a>> {
         Box::pin(async move {
-            let (reply, response) = reply_channel();
+            let (tx, rx) = reply_channel();
             self.0
-                .send(Envelope::new_request(message, reply))
+                .send(Envelope::new_request(message, tx))
                 .map_err(|e| anyhow::anyhow!("Failed to send request: {}", e))?;
-            let result = response
+            let result = rx
                 .recv()
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to receive reply: {}", e))?;

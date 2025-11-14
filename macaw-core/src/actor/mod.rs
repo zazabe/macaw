@@ -5,3 +5,6 @@ mod traits;
 pub use messaging::*;
 pub use terminator::*;
 pub use traits::*;
+
+#[cfg(test)]
+mod tests;

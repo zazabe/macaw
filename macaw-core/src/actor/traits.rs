@@ -141,6 +141,8 @@ pub trait ErasedActorHandle: Send {
     fn stop(&self);
 
     fn exit(&self);
+
+    fn exit_with_error(&self, error: anyhow::Error);
 }
 
 impl fmt::Debug for Box<dyn ErasedActorHandle> {
@@ -243,11 +245,15 @@ impl<A: Actor> ErasedActorHandle for ActorHandle<A> {
     fn exit(&self) {
         self.inner.context.exit();
     }
+
+    fn exit_with_error(&self, error: anyhow::Error) {
+        self.inner.context.exit_with_error(error);
+    }
 }
 
 // ------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActorStopReason {
     TaskTerminatedReceived,
     ExitNotificationReceived,
@@ -275,13 +281,13 @@ where
             message = message_rx.recv().fuse() => match message {
                 Ok(message) => {
                     if let Err(e) = message.into_inner().handle_with_actor(&mut actor).await {
-                        actor.on_error(&context, e);
+                        actor.on_error(&context, anyhow::anyhow!("[{}] Failed to handle message: {}", actor.name(), e));
                         stop_reason = Some(ActorStopReason::FailedToHandleMessage);
                         break;
                     }
                 }
                 Err(e) => {
-                    actor.on_error(&context, e);
+                    actor.on_error(&context, anyhow::anyhow!("[{}] Channel closed, actor handle dropped?", actor.name()));
                     stop_reason = Some(ActorStopReason::ChannelClosed);
                     break;
                 }
