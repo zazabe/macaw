@@ -39,10 +39,7 @@ pub trait Actor: Send + Sized + 'static {
                 .name(&name)
                 .spawn(run_actor(self, rx, context.clone()));
 
-        ActorHandle {
-            tx,
-            context: context.clone(),
-        }
+        ActorHandle::new(tx, context.clone())
     }
 
     fn run(self, context: &ActorContext) -> ActorHandle<Self> {
@@ -63,32 +60,36 @@ where
 // ------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct AppContext {
+pub(crate) struct AppContext {
     terminate: AppTerminator,
 }
 
 impl AppContext {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             terminate: AppTerminator::new(),
         }
     }
 
-    pub fn actor_context(&self) -> ActorContext {
-        let notifier = self.terminate.notified();
+    pub(crate) fn actor_context(&self) -> ActorContext {
+        let notifier = self.terminate.exit_handle();
         ActorContext::new(notifier)
     }
 
-    pub fn exit(&mut self) {
+    pub(crate) fn exit_handle(&self) -> AppExitHandle {
+        self.terminate.exit_handle()
+    }
+
+    pub(crate) fn exit(&self) {
         self.terminate.exit();
     }
 
-    pub fn exit_with_error(&mut self, error: anyhow::Error) {
+    pub(crate) fn exit_with_error(&self, error: anyhow::Error) {
         self.terminate.exit_with_error(error);
     }
 
-    pub async fn wait_until_stopped(self) -> Result<(), AppError> {
-        self.terminate.wait_until_stopped().await
+    pub(crate) async fn wait_until_exit(self) -> Result<(), AppError> {
+        self.terminate.wait_until_exit().await
     }
 }
 
@@ -102,12 +103,12 @@ impl Default for AppContext {
 
 #[derive(Debug, Clone)]
 pub struct ActorContext {
-    exit_notifier: ExitNotifier,
+    exit_notifier: AppExitHandle,
     task_terminator: TaskTerminator,
 }
 
 impl ActorContext {
-    fn new(exit_notifier: ExitNotifier) -> Self {
+    fn new(exit_notifier: AppExitHandle) -> Self {
         Self {
             exit_notifier,
             task_terminator: TaskTerminator::new(),
@@ -138,6 +139,14 @@ impl ActorContext {
 
 pub trait ErasedActorHandle: Send {
     fn stop(&self);
+
+    fn exit(&self);
+}
+
+impl fmt::Debug for Box<dyn ErasedActorHandle> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ErasedActorHandle")
+    }
 }
 
 #[derive(Debug)]
@@ -145,11 +154,62 @@ pub struct ActorHandle<A>
 where
     A: Actor,
 {
+    inner: Arc<ActorHandleInner<A>>,
+}
+
+impl<A> ActorHandle<A>
+where
+    A: Actor,
+{
+    pub fn new(tx: ActorChannelSender<A>, context: ActorContext) -> Self {
+        Self {
+            inner: Arc::new(ActorHandleInner { tx, context }),
+        }
+    }
+
+    pub(crate) fn sender(&self) -> ActorChannelSender<A> {
+        self.inner.sender()
+    }
+
+    pub fn send<M>(&self, message: M) -> Result<(), anyhow::Error>
+    where
+        A: ActorHandler<M, Reply = ()>,
+        M: ActorMessage,
+    {
+        self.inner.send(message)
+    }
+
+    pub async fn request<M, R>(&self, message: M) -> Result<R, anyhow::Error>
+    where
+        A: ActorHandler<M, Reply = R>,
+        M: ActorMessage,
+        R: Send + 'static,
+    {
+        self.inner.request(message).await
+    }
+}
+
+impl<A> Clone for ActorHandle<A>
+where
+    A: Actor,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ActorHandleInner<A>
+where
+    A: Actor,
+{
     tx: ActorChannelSender<A>,
     context: ActorContext,
 }
 
-impl<A> ActorHandle<A>
+impl<A> ActorHandleInner<A>
 where
     A: Actor,
 {
@@ -177,16 +237,11 @@ where
 
 impl<A: Actor> ErasedActorHandle for ActorHandle<A> {
     fn stop(&self) {
-        self.context.task_terminator.stop();
+        self.inner.context.task_terminator.stop();
     }
-}
 
-impl<A: Actor> Clone for ActorHandle<A> {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
-            context: self.context.clone(),
-        }
+    fn exit(&self) {
+        self.inner.context.exit();
     }
 }
 

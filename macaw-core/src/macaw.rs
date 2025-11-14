@@ -6,26 +6,44 @@ pub trait ProxyActor: Actor {
     fn id(&self) -> ProxyId;
 }
 
+#[derive(Debug)]
 pub struct Macaw<P: Processor> {
-    actor_context: ActorContext,
+    context: AppContext,
     processor: ActorHandle<P>,
-    proxies: Vec<Box<dyn ErasedActorHandle>>,
+    proxies: ProxyHandles,
+}
+
+impl<P: Processor> Macaw<P> {
+    pub fn exit_handle(&self) -> AppExitHandle {
+        self.context.exit_handle()
+    }
+
+    pub async fn wait_until_stopped(self) -> Result<(), AppError> {
+        self.context.wait_until_exit().await
+    }
+
+    pub fn processor_handle(&self) -> ActorHandle<P> {
+        self.processor.clone()
+    }
 }
 
 impl Macaw<Recorder> {
-    pub fn recorder(actor_context: ActorContext) -> Self {
+    pub fn recorder() -> Self {
+        let context = AppContext::new();
+        let actor_context = context.actor_context();
         let processor = Recorder::new(actor_context.clone());
         let handle = processor.run(&actor_context);
         Self {
-            actor_context,
+            context,
             processor: handle,
-            proxies: Vec::new(),
+            proxies: ProxyHandles::new(),
         }
     }
 
-    pub async fn record(self, path: PathBuf) -> Result<(), anyhow::Error> {
+    pub async fn record_when_exit<P: AsRef<Path>>(self, path: P) -> Result<(), AppError> {
+        self.context.wait_until_exit().await?;
         self.processor
-            .request(RecorderCommand::WriteToFile(path))
+            .request(RecorderCommand::WriteToFile(path.as_ref().to_path_buf()))
             .await?;
         Ok(())
     }
@@ -37,24 +55,23 @@ impl Macaw<Recorder> {
         tx: ActorChannelSender<P>,
     ) -> Result<(), anyhow::Error> {
         let proxy_id = proxy.id();
-        let actor_context = self.actor_context.create_child();
+        let actor_context = self.context.actor_context();
         let handle = proxy.run_with_channel(&actor_context, tx, rx);
-        self.proxies.push(Box::new(handle));
+        self.proxies.push(handle);
         Ok(())
     }
 }
 
 impl Macaw<Replayer> {
-    pub fn replayer<P: AsRef<Path>>(
-        actor_context: ActorContext,
-        path: P,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn replayer<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
+        let context = AppContext::new();
+        let actor_context = context.actor_context();
         let processor = Replayer::new(actor_context.clone(), path)?;
         let handle = processor.run(&actor_context);
         Ok(Self {
-            actor_context,
+            context,
             processor: handle,
-            proxies: Vec::new(),
+            proxies: ProxyHandles::new(),
         })
     }
 
@@ -73,9 +90,9 @@ impl Macaw<Replayer> {
     {
         let proxy_id = proxy.id();
         let proxy_sender = Box::new(tx.clone());
-        let actor_context = self.actor_context.create_child();
+        let actor_context = self.context.actor_context();
         let handle = proxy.run_with_channel(&actor_context, tx, rx);
-        self.proxies.push(Box::new(handle));
+        self.proxies.push(handle);
         self.processor
             .request(ReplayerCommand::RegisterProxy(proxy_id, proxy_sender))
             .await?;
@@ -83,8 +100,23 @@ impl Macaw<Replayer> {
     }
 }
 
-impl<Proc: Processor> Macaw<Proc> {
-    pub fn processor_handle(&self) -> ActorHandle<Proc> {
-        self.processor.clone()
+// ------------------------------------------------------------
+
+#[derive(Debug)]
+struct ProxyHandles(Vec<Box<dyn ErasedActorHandle>>);
+
+impl ProxyHandles {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    fn push<H: ErasedActorHandle + 'static>(&mut self, handle: H) {
+        self.0.push(Box::new(handle));
+    }
+}
+
+impl Default for ProxyHandles {
+    fn default() -> Self {
+        Self::new()
     }
 }

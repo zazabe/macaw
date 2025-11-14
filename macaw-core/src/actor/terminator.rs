@@ -37,11 +37,11 @@ impl AppTerminator {
         self.exit_notifier.notify_waiters();
     }
 
-    pub(crate) fn notified(&self) -> ExitNotifier {
-        ExitNotifier::new(self)
+    pub(crate) fn exit_handle(&self) -> AppExitHandle {
+        AppExitHandle::new(self)
     }
 
-    pub async fn wait_until_stopped(mut self) -> Result<(), AppError> {
+    pub async fn wait_until_exit(mut self) -> Result<(), AppError> {
         self.rx
             .recv()
             .await
@@ -56,24 +56,24 @@ impl Default for AppTerminator {
     }
 }
 
-// Notifies when the main application exits.
+/// App exit handle to signal and observe application exit events.
 #[derive(Debug, Clone)]
-pub(crate) struct ExitNotifier {
+pub struct AppExitHandle {
     notifier: Arc<tokio::sync::Notify>,
     tx: mpsc::Sender<Result<(), AppError>>,
 }
-impl ExitNotifier {
+impl AppExitHandle {
     fn new(app_terminator: &AppTerminator) -> Self {
         let notifier = Arc::clone(&app_terminator.exit_notifier);
         let tx = app_terminator.tx.clone();
         Self { notifier, tx }
     }
 
-    pub(crate) fn exit(&self) {
+    pub fn exit(&self) {
         self.tx.try_send(Ok(())).ok();
     }
 
-    pub(crate) fn exit_with_error(&self, error: anyhow::Error) {
+    pub fn exit_with_error(&self, error: anyhow::Error) {
         self.tx.try_send(Err(error.into())).ok();
     }
     pub(crate) async fn notified(&self) {
