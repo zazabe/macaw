@@ -1,0 +1,33 @@
+stages:
+  - main
+
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+    on_job_failure: none
+
+fmt:
+  stage: main
+  interruptible: true
+  image: docker.io/library/rust:1.90.0
+  before_script:
+    - rustup component add rustfmt
+  script:
+    - cargo fmt --all -- --check
+
+
+clippy:
+  stage: main
+  interruptible: true
+  image: docker.io/library/rust:1.90.0
+  before_script:
+    - rustup component add clippy
+  script:
+    - cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+test:
+  stage: main
+  interruptible: true
+  image: docker.io/library/rust:1.90.0
+  script:
+    - cargo test --workspace --all-targets --all-features

@@ -11,10 +11,6 @@ workspace = true
 name = "macaw_http"
 path = "src/lib.rs"
 
-[[example]]
-name = "http_proxy"
-path = "examples/http_proxy.rs"
-
 [dependencies]
 macaw-core = { path = "../macaw-core" }
 anyhow.workspace = true

@@ -1,5 +1,5 @@
 [workspace]
-members = [ "macaw-core", "macaw-http", "macaw-ws" ]
+members = [ "macaw-core", "macaw-http" ]
 
 [workspace.package]
 version = "0.1.0"
@@ -69,7 +69,6 @@ path = "examples/replayer.rs"
 [dependencies]
 macaw-core = { path = "macaw-core" }
 macaw-http = { path = "macaw-http" }
-macaw-ws = { path = "macaw-ws" }
 anyhow = "*"
 tracing = "*"
 tracing-subscriber = { version = "*", features = [ "env-filter" ] }
