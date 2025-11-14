@@ -56,7 +56,7 @@ impl ActorHandler<ReplayerCommand> for Replayer {
 
 impl Replayer {
     async fn play(&mut self) -> Result<(), anyhow::Error> {
-        while let Some(event) = self.events.next() {
+        for event in self.events.iter() {
             let Event { proxy_id, data, .. } = event;
             let (replay_lock_holder, replay_lock) = lock_channel();
             let proxy = self.proxies.get(&proxy_id).ok_or(anyhow::anyhow!(

@@ -77,12 +77,7 @@ impl EventStore {
         self.events.push(Event::new(id, event));
     }
 
-    pub(crate) fn next(&mut self) -> Option<Event<Box<dyn RecordEvent>>> {
-        if self.index >= self.events.len() {
-            return None;
-        }
-        let event = self.events[self.index].clone();
-        self.index += 1;
-        Some(event)
+    pub(crate) fn iter(&self) -> impl Iterator<Item = Event<Box<dyn RecordEvent>>> {
+        self.events.iter().map(|event| event.clone())
     }
 }
