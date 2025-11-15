@@ -29,6 +29,6 @@ WORKDIR /workspace/$PROJECT_NAME
 ENV CARGO_HOME=/home/$USERNAME/.cache/.storage/cargo
 
 RUN rustup component add rustfmt clippy
-RUN cargo install cargo-insta
+RUN cargo install --locked tokio-console cargo-insta
 
 ENTRYPOINT ["sleep", "infinity"]

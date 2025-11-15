@@ -79,5 +79,6 @@ futures.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tracing-subscriber = { version = "*", features = [ "env-filter" ] }
+console-subscriber = "0.5"
 tokio-stream = { version = "*", features = [ "full" ] }
 signal = "0.7"

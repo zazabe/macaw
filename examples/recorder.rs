@@ -5,7 +5,7 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt::init();
+    console_subscriber::init();
 
     let mut macaw = Macaw::recorder();
     macaw
