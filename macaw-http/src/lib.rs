@@ -17,7 +17,7 @@ pub(crate) mod lib {
     pub(crate) use macaw_core::prelude::*;
     pub(crate) use serde::{Deserialize, Serialize};
     pub(crate) use std::cell::RefCell;
-    pub(crate) use std::collections::HashMap;
+    pub(crate) use std::collections::{BTreeMap, HashMap};
     pub(crate) use std::fmt;
     pub(crate) use std::future::Future;
     pub(crate) use std::net::SocketAddr;

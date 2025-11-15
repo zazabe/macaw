@@ -42,6 +42,8 @@ thiserror = "2"
 # For tests
 tempfile = "3"
 insta = { version = "1", features = [ "yaml", "redactions" ] }
+httpmock = "0.8"
+reqwest = { version = "0.12", features = [ "json" ] }
 
 [workspace.lints.rust]
 dead_code = "allow"
@@ -73,9 +75,9 @@ path = "examples/replayer.rs"
 macaw-core = { path = "macaw-core" }
 macaw-http = { path = "macaw-http" }
 anyhow = "*"
-tracing = "*"
+futures.workspace = true
+tracing.workspace = true
+tokio.workspace = true
 tracing-subscriber = { version = "*", features = [ "env-filter" ] }
-futures = "*"
-tokio = { version = "*", features = [ "full", "tracing" ] }
 tokio-stream = { version = "*", features = [ "full" ] }
 signal = "0.7"

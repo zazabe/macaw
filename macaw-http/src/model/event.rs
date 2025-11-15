@@ -1,3 +1,5 @@
+use http::header;
+
 use crate::lib::*;
 
 #[derive(Debug, Clone)]
@@ -30,8 +32,8 @@ pub(crate) struct HttpRequestEvent {
     pub(crate) uri: http::Uri,
     #[serde(with = "http_version_serde")]
     pub(crate) version: http::Version,
-    pub(crate) headers: Vec<(String, String)>,
-    pub(crate) body: Option<Content>,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) body: Box<dyn Content>,
 }
 
 impl HttpRequestEvent {
@@ -46,7 +48,7 @@ impl HttpRequestEvent {
                 .iter()
                 .map(|(k, v)| Ok::<_, anyhow::Error>((k.to_string(), v.to_str()?.to_string())))
                 .try_collect()?,
-            body: Some(Content::from_bytes(req.body().to_bytes().as_ref())),
+            body: <dyn Content>::from_bytes(req.body().to_bytes().as_ref()),
         })
     }
 
@@ -60,13 +62,7 @@ impl HttpRequestEvent {
             builder = builder.header(key, value);
         }
 
-        let body = match &self.body {
-            Some(content) => {
-                let bytes = content.to_bytes()?;
-                BodyBytes::new(Bytes::from(bytes))
-            }
-            None => BodyBytes::new(Bytes::new()),
-        };
+        let body = BodyBytes::new(self.body.to_bytes()?);
 
         Ok(builder.body(body)?)
     }
@@ -75,11 +71,11 @@ impl HttpRequestEvent {
         self.method == other.method
             && self.uri == other.uri
             && self.version == other.version
-            && self.headers == other.headers
+            && remove_standard_headers(&self.headers) == remove_standard_headers(&other.headers)
     }
 }
 
-#[typetag::serde]
+#[typetag::serde(name = "HttpRequest")]
 impl RecordEvent for HttpRequestEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,8 +85,8 @@ pub(crate) struct HttpResponseEvent {
     pub(crate) status: http::StatusCode,
     #[serde(with = "http_version_serde")]
     pub(crate) version: http::Version,
-    pub(crate) headers: Vec<(String, String)>,
-    pub(crate) body: Option<Content>,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) body: Box<dyn Content>,
 }
 
 impl HttpResponseEvent {
@@ -107,7 +103,7 @@ impl HttpResponseEvent {
                 .iter()
                 .map(|(k, v)| Ok::<_, anyhow::Error>((k.to_string(), v.to_str()?.to_string())))
                 .try_collect()?,
-            body: Some(Content::from_bytes(res.body().to_bytes().as_ref())),
+            body: <dyn Content>::from_bytes(res.body().to_bytes().as_ref()),
         })
     }
 
@@ -120,17 +116,118 @@ impl HttpResponseEvent {
             builder = builder.header(key, value);
         }
 
-        let body = match &self.body {
-            Some(content) => {
-                let bytes = content.to_bytes()?;
-                BodyBytes::new(Bytes::from(bytes))
-            }
-            None => BodyBytes::new(Bytes::new()),
-        };
+        let body = BodyBytes::new(self.body.to_bytes()?);
 
         Ok(builder.body(body)?)
     }
 }
 
-#[typetag::serde]
+#[typetag::serde(name = "HttpResponse")]
 impl RecordEvent for HttpResponseEvent {}
+
+// ----------------------------------------
+
+/// Remove standard HTTP headers from a HeaderMap
+pub(crate) fn remove_standard_headers(
+    headers: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let headers_to_keep = [
+        header::ACCEPT_ENCODING,
+        header::CONTENT_ENCODING,
+        header::USER_AGENT,
+        header::CONTENT_TYPE,
+        header::DATE,
+    ];
+    let mut cleaned_headers = headers.clone();
+    for header_name in standard_http_headers() {
+        if !headers_to_keep.contains(&header_name) {
+            cleaned_headers.remove(&header_name.to_string());
+        }
+    }
+    cleaned_headers
+}
+
+/// Returns a list of all standard HTTP headers as defined by the 'http' crate.
+fn standard_http_headers() -> Vec<HeaderName> {
+    vec![
+        header::ACCEPT,
+        header::ACCEPT_CHARSET,
+        header::ACCEPT_ENCODING,
+        header::ACCEPT_LANGUAGE,
+        header::ACCEPT_RANGES,
+        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        header::ACCESS_CONTROL_MAX_AGE,
+        header::ACCESS_CONTROL_REQUEST_HEADERS,
+        header::ACCESS_CONTROL_REQUEST_METHOD,
+        header::AGE,
+        header::ALLOW,
+        header::ALT_SVC,
+        header::AUTHORIZATION,
+        header::CACHE_CONTROL,
+        header::CONNECTION,
+        header::CONTENT_DISPOSITION,
+        header::CONTENT_ENCODING,
+        header::CONTENT_LANGUAGE,
+        header::CONTENT_LENGTH,
+        header::CONTENT_LOCATION,
+        header::CONTENT_RANGE,
+        header::CONTENT_SECURITY_POLICY,
+        header::CONTENT_SECURITY_POLICY_REPORT_ONLY,
+        header::CONTENT_TYPE,
+        header::COOKIE,
+        header::DATE,
+        header::DNT,
+        header::ETAG,
+        header::EXPECT,
+        header::EXPIRES,
+        header::FORWARDED,
+        header::FROM,
+        header::HOST,
+        header::IF_MATCH,
+        header::IF_MODIFIED_SINCE,
+        header::IF_NONE_MATCH,
+        header::IF_RANGE,
+        header::IF_UNMODIFIED_SINCE,
+        header::LAST_MODIFIED,
+        header::LINK,
+        header::LOCATION,
+        header::MAX_FORWARDS,
+        header::ORIGIN,
+        header::PRAGMA,
+        header::PROXY_AUTHENTICATE,
+        header::PROXY_AUTHORIZATION,
+        header::PUBLIC_KEY_PINS,
+        header::PUBLIC_KEY_PINS_REPORT_ONLY,
+        header::RANGE,
+        header::REFERER,
+        header::REFERRER_POLICY,
+        header::REFRESH,
+        header::RETRY_AFTER,
+        header::SEC_WEBSOCKET_ACCEPT,
+        header::SEC_WEBSOCKET_EXTENSIONS,
+        header::SEC_WEBSOCKET_KEY,
+        header::SEC_WEBSOCKET_PROTOCOL,
+        header::SEC_WEBSOCKET_VERSION,
+        header::SERVER,
+        header::SET_COOKIE,
+        header::STRICT_TRANSPORT_SECURITY,
+        header::TE,
+        header::TRAILER,
+        header::TRANSFER_ENCODING,
+        header::UPGRADE,
+        header::UPGRADE_INSECURE_REQUESTS,
+        header::USER_AGENT,
+        header::VARY,
+        header::VIA,
+        header::WARNING,
+        header::WWW_AUTHENTICATE,
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::X_DNS_PREFETCH_CONTROL,
+        header::X_FRAME_OPTIONS,
+        header::X_XSS_PROTECTION,
+    ]
+}
