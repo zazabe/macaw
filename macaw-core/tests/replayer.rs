@@ -232,7 +232,7 @@ impl TestMacawReplayerSetup for Macaw<Replayer> {
         rx: ActorChannelReceiver<ProxyReplayerActor<TestProxy>>,
         replay_tx: mpsc::UnboundedSender<TestEvent>,
     ) -> Result<(), anyhow::Error> {
-        let proxy_id = ProxyId::named(proxy_id).unwrap();
+        let proxy_id = ProxyId::new(proxy_id).unwrap();
         let proxy = TestProxy::new(proxy_id, replay_tx);
         let actor = ProxyReplayerActor::new(proxy);
         self.add_proxy(move |_replayer, actor_context| {

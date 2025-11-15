@@ -37,7 +37,7 @@ impl RecordedEventWithLock {
 
 /// Trait to support ser/de for generic RecordEvent, allowing to record and replay generic events.
 #[dyn_clonable::clonable]
-#[typetag::serde(tag = "type")]
+#[typetag::serde]
 pub trait RecordEvent: Send + Sync + Any + fmt::Debug + Clone + 'static {}
 
 impl dyn RecordEvent {
@@ -99,8 +99,10 @@ impl RecordHeader {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Event<D> {
+    #[serde(rename = "proxy")]
     pub(crate) proxy_id: ProxyId,
     pub(crate) timestamp: DateTime<Utc>,
+    #[serde(flatten)]
     pub(crate) data: D,
 }
 
@@ -122,53 +124,65 @@ impl Event<Box<dyn RecordEvent>> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Content {
-    encoding: ContentEncoding,
-    data: String,
+// ----------------------------------------
+
+#[dyn_clonable::clonable]
+#[typetag::serde]
+pub trait Content: Send + Sync + Any + fmt::Debug + Clone + 'static {
+    fn to_bytes(&self) -> Result<Bytes, anyhow::Error>;
 }
 
-impl Content {
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        match String::from_utf8(bytes.to_vec()) {
-            Ok(s) => Self {
-                encoding: ContentEncoding::Plain,
-                data: s,
-            },
-            Err(e) => Self {
-                encoding: ContentEncoding::Base64,
-                data: BASE64_STANDARD.encode(bytes),
-            },
-        }
-    }
-
-    pub fn to_bytes(&self) -> Result<Vec<u8>, anyhow::Error> {
-        match self.encoding {
-            ContentEncoding::Plain => Ok(self.data.as_bytes().to_vec()),
-            ContentEncoding::Base64 => Ok(BASE64_STANDARD.decode(&self.data)?),
-        }
-    }
-
-    pub fn from_string(s: String) -> Self {
-        Self {
-            encoding: ContentEncoding::Plain,
-            data: s,
-        }
-    }
-
-    pub fn to_string(&self) -> Result<String, anyhow::Error> {
-        match self.encoding {
-            ContentEncoding::Plain => Ok(self.data.clone()),
-            ContentEncoding::Base64 => {
-                let bytes = BASE64_STANDARD.decode(&self.data)?;
-                Ok(String::from_utf8(bytes)?)
+impl dyn Content {
+    pub fn from_bytes(bytes: &[u8]) -> Box<dyn Content> {
+        if bytes.is_empty() {
+            Box::new(Empty)
+        } else {
+            match String::from_utf8(bytes.to_vec()) {
+                Ok(s) => Box::new(PlainText::new(s)),
+                Err(_) => Box::new(Base64::from_bytes(bytes)),
             }
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum ContentEncoding {
-    Plain,
-    Base64,
+pub struct PlainText(String);
+
+impl PlainText {
+    pub fn new(data: String) -> Self {
+        Self(data)
+    }
+}
+
+#[typetag::serde]
+impl Content for PlainText {
+    fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
+        Ok(Bytes::from(self.0.as_bytes().to_vec()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Base64(String);
+
+impl Base64 {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(BASE64_STANDARD.encode(bytes))
+    }
+}
+
+#[typetag::serde]
+impl Content for Base64 {
+    fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
+        Ok(Bytes::from(BASE64_STANDARD.decode(self.0.as_bytes())?))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Empty;
+
+#[typetag::serde]
+impl Content for Empty {
+    fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
+        Ok(Bytes::new())
+    }
 }

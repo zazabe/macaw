@@ -1,35 +1,29 @@
 header:
-  record_id: ca718cde-b59d-41ad-bdf2-3b8d3b582b5a
-  record_seed: 362f20a6-fea2-4bfc-a8cf-700544625322
-  timestamp: 2025-11-15T09:10:48.058932638Z
+  record_id: bf7c4381-5315-4d39-90e2-a48cf93f2951
+  record_seed: 9a99deab-d88c-43cd-862c-2b0b5c6696a3
+  timestamp: 2025-11-15T10:39:24.874288048Z
 events:
-- proxy_id: !Named test_proxy1
-  timestamp: 2025-11-15T09:10:48.059142471Z
-  data:
-    type: RequestEvent
+- proxy: test_proxy1
+  timestamp: 2025-11-15T10:39:24.874846877Z
+  RequestEvent:
     value: proxy1_event
-- proxy_id: !Named test_proxy1
-  timestamp: 2025-11-15T09:10:48.059154673Z
-  data:
-    type: ResponseEvent
+- proxy: test_proxy1
+  timestamp: 2025-11-15T10:39:24.874863989Z
+  ResponseEvent:
     value: response:proxy1_event
-- proxy_id: !Named test_proxy2
-  timestamp: 2025-11-15T09:10:48.059195901Z
-  data:
-    type: RequestEvent
+- proxy: test_proxy2
+  timestamp: 2025-11-15T10:39:24.874947116Z
+  RequestEvent:
     value: proxy2_event
-- proxy_id: !Named test_proxy2
-  timestamp: 2025-11-15T09:10:48.059205098Z
-  data:
-    type: ResponseEvent
+- proxy: test_proxy2
+  timestamp: 2025-11-15T10:39:24.874957395Z
+  ResponseEvent:
     value: response:proxy2_event
-- proxy_id: !Named test_proxy1
-  timestamp: 2025-11-15T09:10:48.059246986Z
-  data:
-    type: IncomingEvent
+- proxy: test_proxy1
+  timestamp: 2025-11-15T10:39:24.875013310Z
+  IncomingEvent:
     value: incoming_event
-- proxy_id: !Named test_proxy2
-  timestamp: 2025-11-15T09:10:48.059256023Z
-  data:
-    type: IncomingEvent
+- proxy: test_proxy2
+  timestamp: 2025-11-15T10:39:24.875023068Z
+  IncomingEvent:
     value: incoming_event

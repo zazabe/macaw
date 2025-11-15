@@ -58,41 +58,29 @@ async fn test_recorder_multiple_proxies() {
       record_seed: "[record_seed]"
       timestamp: "[timestamp]"
     events:
-      - proxy_id:
-          "!Named": test_proxy1
+      - proxy: test_proxy1
         timestamp: "[timestamp]"
-        data:
-          type: RequestEvent
+        RequestEvent:
           value: proxy1_event
-      - proxy_id:
-          "!Named": test_proxy1
+      - proxy: test_proxy1
         timestamp: "[timestamp]"
-        data:
-          type: ResponseEvent
+        ResponseEvent:
           value: "response:proxy1_event"
-      - proxy_id:
-          "!Named": test_proxy2
+      - proxy: test_proxy2
         timestamp: "[timestamp]"
-        data:
-          type: RequestEvent
+        RequestEvent:
           value: proxy2_event
-      - proxy_id:
-          "!Named": test_proxy2
+      - proxy: test_proxy2
         timestamp: "[timestamp]"
-        data:
-          type: ResponseEvent
+        ResponseEvent:
           value: "response:proxy2_event"
-      - proxy_id:
-          "!Named": test_proxy1
+      - proxy: test_proxy1
         timestamp: "[timestamp]"
-        data:
-          type: IncomingEvent
+        IncomingEvent:
           value: incoming_event
-      - proxy_id:
-          "!Named": test_proxy2
+      - proxy: test_proxy2
         timestamp: "[timestamp]"
-        data:
-          type: IncomingEvent
+        IncomingEvent:
           value: incoming_event
     "#);
 }

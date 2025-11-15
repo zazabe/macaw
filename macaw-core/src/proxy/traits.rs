@@ -5,35 +5,24 @@ use arrayvec::ArrayString;
 use futures::future;
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
-pub enum ProxyId {
-    Uuid(Uuid),
-    Named(ArrayString<64>),
-}
+pub struct ProxyId(ArrayString<64>);
 
 impl ProxyId {
-    pub fn uuid() -> Self {
-        Self::Uuid(Uuid::new_v4())
-    }
-
-    pub fn named(name: &str) -> Result<Self, anyhow::Error> {
-        Ok(Self::Named(ArrayString::from_str(name)?))
+    pub fn new(name: &str) -> Result<Self, anyhow::Error> {
+        Ok(Self(ArrayString::from_str(name)?))
     }
 }
 
 impl fmt::Display for ProxyId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::Uuid(uuid) => Cow::Owned(uuid.simple().to_string()),
-            Self::Named(name) => Cow::Borrowed(name.as_str()),
-        };
-        write!(f, "proxy:{}", name.as_ref())
+        write!(f, "proxy:{}", self.0.as_str())
     }
 }
 
 impl FromStr for ProxyId {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::named(s)
+        Self::new(s)
     }
 }
 
