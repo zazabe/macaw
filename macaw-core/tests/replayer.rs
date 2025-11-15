@@ -233,8 +233,8 @@ impl TestMacawReplayerSetup for Macaw<Replayer> {
     ) -> Result<(), anyhow::Error> {
         let proxy_id = ProxyId::new(proxy_id).unwrap();
         let proxy = TestProxy::new(proxy_id, replay_tx);
-        let actor = ProxyReplayerActor::new(proxy);
         self.add_proxy(move |_replayer, actor_context| {
+            let actor = ProxyReplayerActor::new(actor_context.clone(), proxy);
             Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
         })
         .await?;

@@ -35,13 +35,15 @@ impl HttpServer {
         }
     }
 
-    pub(crate) async fn start(&mut self) -> Result<SocketAddr, anyhow::Error> {
+    pub(crate) async fn start(&self, context: &ActorContext) -> Result<SocketAddr, anyhow::Error> {
         let listener = TcpListener::bind(self.addr).await?;
         let local_addr = listener.local_addr()?;
         info!("Listening on http://{}", local_addr);
 
-        let task = tokio::spawn(Box::pin({
+        let fut = Box::pin({
             let sender = self.sender.clone();
+            let context = context.clone();
+            let mut conn_id = 0;
             async move {
                 loop {
                     let (stream, _) = listener.accept().await?;
@@ -49,19 +51,17 @@ impl HttpServer {
                     let service = RequestHandlerService {
                         sender: sender.clone(),
                     };
-                    tokio::spawn(http1::Builder::new().serve_connection(io, service));
+                    context.spawn(
+                        format!("http-server-conn-{}", conn_id).as_str(),
+                        http1::Builder::new().serve_connection(io, service),
+                    )?;
+                    conn_id += 1;
                 }
             }
-        }));
-        self.task = Some(task);
+        });
+        let task: tokio::task::JoinHandle<TerminationReason<Result<(), anyhow::Error>>> =
+            context.spawn("http-server", fut)?;
         Ok(local_addr)
-    }
-
-    pub(crate) fn stop(&mut self) -> Result<(), anyhow::Error> {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-        Ok(())
     }
 }
 

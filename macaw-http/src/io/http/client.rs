@@ -13,7 +13,7 @@ pub(crate) struct HttpClient {
 }
 
 impl HttpClient {
-    pub(crate) fn new(addr: SocketAddr) -> Result<Self, anyhow::Error> {
+    pub(crate) fn new() -> Result<Self, anyhow::Error> {
         let tls_config = rustls::ClientConfig::with_platform_verifier()?;
         let mut http = HttpConnector::new();
         http.enforce_http(false);

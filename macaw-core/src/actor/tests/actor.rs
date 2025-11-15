@@ -4,9 +4,9 @@ use std::sync::Arc;
 #[tokio::test]
 async fn test_actor_start_stop() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new("test_actor");
+    let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
     let handle = actor.run(&actor_context);
@@ -29,10 +29,10 @@ async fn test_actor_start_stop() {
 #[tokio::test]
 async fn test_app_exit() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor_1");
 
-    let actor1 = TestActor::new("test_actor_1");
-    let actor2 = TestActor::new("test_actor_2");
+    let actor1 = TestActor::new(actor_context.clone());
+    let actor2 = TestActor::new(actor_context.clone());
     let state1 = actor1.state();
     let state2 = actor2.state();
 
@@ -65,10 +65,10 @@ async fn test_app_exit() {
 #[tokio::test]
 async fn test_app_exit_with_error() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor_1");
 
-    let actor1 = TestActor::new("test_actor_1");
-    let actor2 = TestActor::new("test_actor_2");
+    let actor1 = TestActor::new(actor_context.clone());
+    let actor2 = TestActor::new(actor_context.clone());
     let state1 = actor1.state();
     let state2 = actor2.state();
 
@@ -107,9 +107,9 @@ async fn test_app_exit_with_error() {
 #[tokio::test]
 async fn test_actor_send() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new("test_actor");
+    let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
     let handle = actor.run(&actor_context);
@@ -139,9 +139,9 @@ async fn test_actor_send() {
 #[tokio::test]
 async fn test_actor_request() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new("test_actor");
+    let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
     let handle = actor.run(&actor_context);
 
@@ -171,9 +171,9 @@ async fn test_actor_request() {
 #[tokio::test]
 async fn test_actor_send_error_actor_stopped() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new("test_actor");
+    let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
     let handle = actor.run(&actor_context);
@@ -199,9 +199,9 @@ async fn test_actor_send_error_actor_stopped() {
 #[tokio::test]
 async fn test_actor_request_error_actor_stopped() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new("test_actor");
+    let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
     let handle = actor.run(&actor_context);
@@ -224,9 +224,9 @@ async fn test_actor_request_error_actor_stopped() {
 #[tokio::test]
 async fn test_actor_stopped_due_to_channel_closed() {
     let app_context = AppContext::new();
-    let actor_context = app_context.actor_context();
+    let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new("test_actor");
+    let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
     let handle = actor.run(&actor_context);
@@ -345,16 +345,14 @@ impl TestActorState {
 // Test actor for basic functionality
 #[derive(Debug)]
 struct TestActor {
-    name: String,
-    context: Option<ActorContext>,
+    context: ActorContext,
     state: TestActorState,
 }
 
 impl TestActor {
-    fn new(name: &str) -> Self {
+    fn new(context: ActorContext) -> Self {
         Self {
-            name: name.to_string(),
-            context: None,
+            context,
             state: TestActorState::new(),
         }
     }
@@ -365,8 +363,8 @@ impl TestActor {
 }
 
 impl Actor for TestActor {
-    fn name(&self) -> &str {
-        &self.name
+    fn context(&self) -> &ActorContext {
+        &self.context
     }
 
     async fn on_start(&mut self, _context: &ActorContext) {

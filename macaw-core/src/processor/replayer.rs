@@ -31,8 +31,8 @@ impl Replayer {
 impl Processor for Replayer {}
 
 impl Actor for Replayer {
-    fn name(&self) -> &str {
-        "macaw:replayer"
+    fn context(&self) -> &ActorContext {
+        &self.context
     }
 }
 

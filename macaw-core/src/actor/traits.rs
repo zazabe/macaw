@@ -7,10 +7,10 @@ use crate::lib::*;
 use futures::FutureExt;
 
 pub trait Actor: Send + Sized + 'static {
-    fn name(&self) -> &str;
+    fn context(&self) -> &ActorContext;
 
     fn on_start(&mut self, context: &ActorContext) -> impl Future<Output = ()> + Send {
-        debug!("Actor starting: {}", self.name());
+        debug!("Actor starting: {}", context.name);
         futures::future::ready(())
     }
 
@@ -23,7 +23,7 @@ pub trait Actor: Send + Sized + 'static {
     }
 
     fn on_error(&mut self, context: &ActorContext, error: anyhow::Error) {
-        error!("Actor stopped with error: {}", self.name());
+        error!("Actor stopped with error: {}", context.name);
         context.exit_with_error(error);
     }
 
@@ -33,11 +33,9 @@ pub trait Actor: Send + Sized + 'static {
         tx: ActorChannelSender<Self>,
         rx: ActorChannelReceiver<Self>,
     ) -> ActorHandle<Self> {
-        let name = self.name().to_owned();
-        let task =
-            tokio::task::Builder::new()
-                .name(&name)
-                .spawn(run_actor(self, rx, context.clone()));
+        let task = tokio::task::Builder::new()
+            .name(&context.name)
+            .spawn(run_actor(self, rx, context.clone()));
 
         ActorHandle::new(tx, context.clone())
     }
@@ -71,9 +69,9 @@ impl AppContext {
         }
     }
 
-    pub(crate) fn actor_context(&self) -> ActorContext {
+    pub(crate) fn actor_context(&self, name: &str) -> ActorContext {
         let notifier = self.terminate.exit_handle();
-        ActorContext::new(notifier)
+        ActorContext::new(name, notifier)
     }
 
     pub(crate) fn exit_handle(&self) -> AppExitHandle {
@@ -103,20 +101,23 @@ impl Default for AppContext {
 
 #[derive(Debug, Clone)]
 pub struct ActorContext {
+    name: String,
     exit_notifier: AppExitHandle,
     task_terminator: TaskTerminator,
 }
 
 impl ActorContext {
-    fn new(exit_notifier: AppExitHandle) -> Self {
+    fn new(name: &str, exit_notifier: AppExitHandle) -> Self {
         Self {
+            name: name.to_string(),
             exit_notifier,
             task_terminator: TaskTerminator::new(),
         }
     }
 
-    pub fn create_child(&self) -> Self {
+    pub fn create_child(&self, name: &str) -> Self {
         Self {
+            name: self.name.clone() + ":" + name,
             exit_notifier: self.exit_notifier.clone(),
             task_terminator: TaskTerminator::new(),
         }
@@ -132,6 +133,23 @@ impl ActorContext {
 
     pub fn stop(&self) {
         self.task_terminator.stop();
+    }
+
+    pub fn spawn<F, R>(
+        &self,
+        name: &str,
+        future: F,
+    ) -> Result<JoinHandle<TerminationReason<R>>, anyhow::Error>
+    where
+        F: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let name = self.name.clone() + ":" + name;
+        let handle = tokio::task::Builder::new().name(&name).spawn({
+            let mut context = self.clone();
+            async move { terminatable_future(&mut context, future).await }
+        })?;
+        Ok(handle)
     }
 }
 
@@ -277,28 +295,32 @@ where
             stop_reason = Some(ActorStopReason::TaskTerminatedReceived);
             break;
         }
-        futures::select! {
-            message = message_rx.recv().fuse() => match message {
+        match terminatable_future(&mut context, message_rx.recv()).await {
+            TerminationReason::Finished(result) => match result {
                 Ok(message) => {
                     if let Err(e) = message.into_inner().handle_with_actor(&mut actor).await {
-                        actor.on_error(&context, anyhow::anyhow!("[{}] Failed to handle message: {}", actor.name(), e));
+                        actor.on_error(
+                            &context,
+                            anyhow::anyhow!("[{}] Failed to handle message: {}", context.name, e),
+                        );
                         stop_reason = Some(ActorStopReason::FailedToHandleMessage);
                         break;
                     }
                 }
                 Err(e) => {
-                    actor.on_error(&context, anyhow::anyhow!("[{}] Channel closed, actor handle dropped?", actor.name()));
+                    actor.on_error(
+                        &context,
+                        anyhow::anyhow!("[{}] Channel closed, actor handle dropped?", context.name),
+                    );
                     stop_reason = Some(ActorStopReason::ChannelClosed);
                     break;
                 }
             },
-
-            _ = context.task_terminator.wait().fuse() => {
+            TerminationReason::TaskTerminatedReceived => {
                 stop_reason = Some(ActorStopReason::TaskTerminatedReceived);
                 break;
             }
-
-            _ = context.exit_notifier.notified().fuse() => {
+            TerminationReason::ExitNotificationReceived => {
                 stop_reason = Some(ActorStopReason::ExitNotificationReceived);
                 break;
             }
@@ -306,4 +328,30 @@ where
     }
     actor.on_stop(&context, stop_reason).await;
     Ok(())
+}
+
+pub enum TerminationReason<R> {
+    Finished(R),
+    TaskTerminatedReceived,
+    ExitNotificationReceived,
+}
+
+async fn terminatable_future<'a, F, R>(
+    context: &mut ActorContext,
+    future: F,
+) -> TerminationReason<R>
+where
+    F: Future<Output = R> + Send + 'a,
+{
+    futures::select! {
+        result = future.fuse() => {
+            TerminationReason::Finished(result)
+        }
+        _ = context.task_terminator.wait().fuse() => {
+            TerminationReason::TaskTerminatedReceived
+        }
+        _ = context.exit_notifier.notified().fuse() => {
+            TerminationReason::ExitNotificationReceived
+        }
+    }
 }

@@ -15,7 +15,7 @@ impl ProxyId {
 
 impl fmt::Display for ProxyId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "proxy:{}", self.0.as_str())
+        write!(f, "{}", self.0.as_str())
     }
 }
 

@@ -167,7 +167,7 @@ impl TestMacawRecordSetup for Macaw<Recorder> {
         let proxy = TestProxy::new(proxy_id.parse()?);
         self.add_proxy(move |recorder, actor_context| {
             let proxy_id = proxy.id();
-            let actor = ProxyRecorderActor::new(proxy, recorder.clone());
+            let actor = ProxyRecorderActor::new(actor_context.clone(), proxy, recorder.clone());
             Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
         })?;
         Ok(())

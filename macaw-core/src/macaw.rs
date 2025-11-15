@@ -26,7 +26,7 @@ impl<P: Processor> Macaw<P> {
 impl Macaw<Recorder> {
     pub fn recorder() -> Self {
         let context = AppContext::new();
-        let actor_context = context.actor_context();
+        let actor_context = context.actor_context("recorder");
         let processor = Recorder::new(actor_context.clone());
         let handle = processor.run(&actor_context);
         Self {
@@ -44,7 +44,7 @@ impl Macaw<Recorder> {
         Ok(())
     }
 
-    pub fn add_proxy<P, F>(&mut self, f: F) -> Result<(), anyhow::Error>
+    pub fn add_proxy<P, F>(&mut self, f: F) -> Result<(ProxyId, ActorHandle<P>), anyhow::Error>
     where
         P: ProxyActor,
         F: FnOnce(
@@ -52,17 +52,17 @@ impl Macaw<Recorder> {
             ActorContext,
         ) -> Result<(ProxyId, ActorHandle<P>), anyhow::Error>,
     {
-        let actor_context = self.context.actor_context();
+        let actor_context = self.context.actor_context("proxy");
         let (proxy_id, handle) = f(&self.processor, actor_context)?;
-        self.proxies.insert(proxy_id, handle);
-        Ok(())
+        self.proxies.insert(proxy_id, handle.clone());
+        Ok((proxy_id, handle))
     }
 }
 
 impl Macaw<Replayer> {
     pub fn replayer<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
         let context = AppContext::new();
-        let actor_context = context.actor_context();
+        let actor_context = context.actor_context("replayer");
         let processor = Replayer::new(actor_context.clone(), path)?;
         let handle = processor.run(&actor_context);
         Ok(Self {
@@ -76,7 +76,10 @@ impl Macaw<Replayer> {
         self.processor.send(ReplayerCommand::Play)
     }
 
-    pub async fn add_proxy<P, F>(&mut self, f: F) -> Result<(), anyhow::Error>
+    pub async fn add_proxy<P, F>(
+        &mut self,
+        f: F,
+    ) -> Result<(ProxyId, ActorHandle<P>), anyhow::Error>
     where
         P: ProxyActor + ActorHandler<RecordedEventWithLock, Reply = ()>,
         F: FnOnce(
@@ -84,14 +87,14 @@ impl Macaw<Replayer> {
             ActorContext,
         ) -> Result<(ProxyId, ActorHandle<P>), anyhow::Error>,
     {
-        let actor_context = self.context.actor_context();
+        let actor_context = self.context.actor_context("proxy");
         let (proxy_id, handle) = f(&self.processor, actor_context)?;
         let sender = handle.sender();
-        self.proxies.insert(proxy_id, handle);
+        self.proxies.insert(proxy_id, handle.clone());
         self.processor
             .request(ReplayerCommand::RegisterProxy(proxy_id, Box::new(sender)))
             .await?;
-        Ok(())
+        Ok((proxy_id, handle))
     }
 }
 

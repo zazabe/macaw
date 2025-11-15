@@ -5,28 +5,25 @@ pub(crate) struct HttpReplayerProxy {
     id: ProxyId,
     downstream: HttpServer,
     pending_requests: PendingRequests,
-    listen_addr: SocketAddr,
 }
 
 impl HttpReplayerProxy {
-    pub(crate) async fn new(
+    pub(crate) fn new(
         proxy_id: ProxyId,
         addr: SocketAddr,
         sender: Box<dyn HttpServerRequestResolver>,
     ) -> Result<Self, anyhow::Error> {
-        let mut downstream = HttpServer::new(addr, sender);
-        let listen_addr = downstream.start().await?;
+        let downstream = HttpServer::new(addr, sender);
 
         Ok(Self {
             id: proxy_id,
             downstream,
             pending_requests: PendingRequests::new(),
-            listen_addr,
         })
     }
 
-    pub(crate) fn listen_addr(&self) -> SocketAddr {
-        self.listen_addr
+    pub(crate) async fn start(&self, context: &ActorContext) -> Result<SocketAddr, anyhow::Error> {
+        self.downstream.start(context).await
     }
 }
 
@@ -240,6 +237,16 @@ struct MatchedRequest {
 
 // ------------------------------------------------------------
 
+#[derive(Debug)]
+struct StartProxyEvent;
+
+impl ActorHandler<StartProxyEvent> for ProxyReplayerActor<HttpReplayerProxy> {
+    type Reply = Result<SocketAddr, anyhow::Error>;
+    async fn handle(&mut self, _event: StartProxyEvent) -> Result<SocketAddr, anyhow::Error> {
+        self.proxy().start(self.context()).await
+    }
+}
+
 pub trait HttpMacawReplaySetup {
     fn add_http_proxy(
         &mut self,
@@ -255,15 +262,15 @@ impl HttpMacawReplaySetup for Macaw<Replayer> {
         addr: &str,
     ) -> Result<SocketAddr, anyhow::Error> {
         let (tx, rx) = actor_channel::<ProxyReplayerActor<HttpReplayerProxy>>();
-        let proxy =
-            HttpReplayerProxy::new(proxy_id.parse()?, addr.parse()?, Box::new(tx.clone())).await?;
-        let listen_addr = proxy.listen_addr();
-        self.add_proxy(move |_replayer, actor_context| {
-            let proxy_id = proxy.id();
-            let actor = ProxyReplayerActor::new(proxy);
-            Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
-        })
-        .await?;
+        let (_proxy_id, handle) = self
+            .add_proxy(move |_replayer, actor_context| {
+                let proxy_id = proxy_id.parse()?;
+                let proxy = HttpReplayerProxy::new(proxy_id, addr.parse()?, Box::new(tx.clone()))?;
+                let actor = ProxyReplayerActor::new(actor_context.clone(), proxy);
+                Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
+            })
+            .await?;
+        let listen_addr = handle.request(StartProxyEvent).await??;
         Ok(listen_addr)
     }
 }

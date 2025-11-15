@@ -23,8 +23,8 @@ impl Recorder {
 impl Processor for Recorder {}
 
 impl Actor for Recorder {
-    fn name(&self) -> &str {
-        "macaw:recorder"
+    fn context(&self) -> &ActorContext {
+        &self.context
     }
 }
 
