@@ -247,7 +247,7 @@ impl ActorHandler<StartProxyEvent> for ProxyReplayerActor<HttpReplayerProxy> {
     }
 }
 
-pub trait HttpMacawReplaySetup {
+pub trait MacawHttpReplayerSetup {
     fn add_http_proxy(
         &mut self,
         proxy_id: &str,
@@ -255,7 +255,7 @@ pub trait HttpMacawReplaySetup {
     ) -> impl Future<Output = Result<SocketAddr, anyhow::Error>>;
 }
 
-impl HttpMacawReplaySetup for Macaw<Replayer> {
+impl MacawHttpReplayerSetup for Macaw<Replayer> {
     async fn add_http_proxy(
         &mut self,
         proxy_id: &str,

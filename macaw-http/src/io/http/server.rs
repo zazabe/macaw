@@ -23,16 +23,11 @@ impl fmt::Debug for Box<dyn HttpServerRequestResolver> {
 pub(crate) struct HttpServer {
     addr: SocketAddr,
     sender: Box<dyn HttpServerRequestResolver>,
-    task: Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>,
 }
 
 impl HttpServer {
     pub(crate) fn new(addr: SocketAddr, sender: Box<dyn HttpServerRequestResolver>) -> Self {
-        Self {
-            addr,
-            sender,
-            task: None,
-        }
+        Self { addr, sender }
     }
 
     pub(crate) async fn start(&self, context: &ActorContext) -> Result<SocketAddr, anyhow::Error> {
@@ -40,7 +35,7 @@ impl HttpServer {
         let local_addr = listener.local_addr()?;
         info!("Listening on http://{}", local_addr);
 
-        let fut = Box::pin({
+        let fut = {
             let sender = self.sender.clone();
             let context = context.clone();
             let mut conn_id = 0;
@@ -58,7 +53,7 @@ impl HttpServer {
                     conn_id += 1;
                 }
             }
-        });
+        };
         let task: tokio::task::JoinHandle<TerminationReason<Result<(), anyhow::Error>>> =
             context.spawn("http-server", fut)?;
         Ok(local_addr)
