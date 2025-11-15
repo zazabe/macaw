@@ -35,11 +35,21 @@
             "label": "test",
             "type": "cargo",
             "command": "test",
+            "args": [
+                "--all-targets",
+                "--all-features",
+                "--workspace",
+            ],
         },
         {
             "label": "clippy",
             "type": "cargo",
             "command": "clippy",
+            "args": [
+                "--all-targets",
+                "--all-features",
+                "--workspace",
+            ],
         },
     ]
 }

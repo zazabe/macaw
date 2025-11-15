@@ -135,7 +135,6 @@ impl RecordEventUntagged for TestEvent {
                     .downcast::<IncomingEvent>()
                     .map(|event| Self::Incoming(*event))
             })
-            .map_err(|event| event)
     }
 }
 
