@@ -19,8 +19,6 @@ async fn test_replayer_multiple_http_proxies() {
 
     macaw.play().unwrap();
 
-    tokio::task::yield_now().await;
-
     let client = reqwest::Client::new();
 
     // Make request through proxy 1 - this should match a recorded request

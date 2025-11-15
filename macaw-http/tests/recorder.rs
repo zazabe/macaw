@@ -38,9 +38,6 @@ async fn test_recorder_multiple_http_proxies() {
         .await
         .unwrap();
 
-    // Give proxies time to start
-    tokio::task::yield_now().await;
-
     // Make HTTP requests through the proxies using reqwest
     let client = reqwest::Client::new();
 
@@ -51,9 +48,6 @@ async fn test_recorder_multiple_http_proxies() {
     // Make request through proxy 2
     let proxy2_url = format!("http://{}/test2", proxy2_addr);
     let _res2 = client.get(&proxy2_url).send().await.unwrap();
-
-    // Give time for events to be recorded
-    tokio::task::yield_now().await;
 
     // Exit and save
     macaw.exit_handle().exit();
