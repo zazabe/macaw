@@ -1,7 +1,7 @@
-pub mod record;
-pub mod replay;
+pub mod recorder;
+pub mod replayer;
 pub mod sender;
 
-pub use record::*;
-pub use replay::*;
+pub use recorder::*;
+pub use replayer::*;
 pub use sender::*;

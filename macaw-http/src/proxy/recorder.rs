@@ -1,14 +1,14 @@
 use crate::lib::*;
 
 #[derive(Debug)]
-pub(crate) struct HttpRecordProxy {
+pub(crate) struct HttpRecorderProxy {
     id: ProxyId,
     target_url: TargetUrl,
     upstream: HttpClient,
     downstream: HttpServer,
 }
 
-impl ProxyRecorder for HttpRecordProxy {
+impl ProxyRecorder for HttpRecorderProxy {
     type DownstreamIncomingMessage = HttpRequestEvent;
     type DownstreamOutgoingMessage = HttpResponseEvent;
     type UpstreamIncomingMessage = UnexpectedEvent;
@@ -31,7 +31,7 @@ impl ProxyRecorder for HttpRecordProxy {
     }
 }
 
-impl HttpRecordProxy {
+impl HttpRecorderProxy {
     pub(crate) async fn new(
         proxy_id: ProxyId,
         addr: SocketAddr,
@@ -69,8 +69,8 @@ impl HttpMacawRecordSetup for Macaw<Recorder> {
         addr: &str,
         target_url: &str,
     ) -> Result<(), anyhow::Error> {
-        let (tx, rx) = actor_channel::<ProxyRecorderActor<HttpRecordProxy>>();
-        let proxy = HttpRecordProxy::new(
+        let (tx, rx) = actor_channel::<ProxyRecorderActor<HttpRecorderProxy>>();
+        let proxy = HttpRecorderProxy::new(
             proxy_id.parse()?,
             addr.parse()?,
             target_url.parse()?,

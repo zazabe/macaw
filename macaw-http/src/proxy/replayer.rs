@@ -1,13 +1,13 @@
 use crate::lib::*;
 
 #[derive(Debug)]
-pub(crate) struct HttpReplayProxy {
+pub(crate) struct HttpReplayerProxy {
     id: ProxyId,
     downstream: HttpServer,
     pending_requests: PendingRequests,
 }
 
-impl HttpReplayProxy {
+impl HttpReplayerProxy {
     pub(crate) async fn new(
         proxy_id: ProxyId,
         addr: SocketAddr,
@@ -24,7 +24,7 @@ impl HttpReplayProxy {
     }
 }
 
-impl ProxyReplayer for HttpReplayProxy {
+impl ProxyReplayer for HttpReplayerProxy {
     type DownstreamIncomingMessage = HttpRequestEvent;
     type DownstreamOutgoingMessage = HttpResponseEvent;
     type RecordedMessage = HttpEvent;
@@ -244,9 +244,9 @@ pub trait HttpMacawReplaySetup {
 
 impl HttpMacawReplaySetup for Macaw<Replayer> {
     async fn add_http_proxy(&mut self, proxy_id: &str, addr: &str) -> Result<(), anyhow::Error> {
-        let (tx, rx) = actor_channel::<ProxyReplayerActor<HttpReplayProxy>>();
+        let (tx, rx) = actor_channel::<ProxyReplayerActor<HttpReplayerProxy>>();
         let proxy =
-            HttpReplayProxy::new(proxy_id.parse()?, addr.parse()?, Box::new(tx.clone())).await?;
+            HttpReplayerProxy::new(proxy_id.parse()?, addr.parse()?, Box::new(tx.clone())).await?;
         self.add_proxy(move |_replayer, actor_context| {
             let proxy_id = proxy.id();
             let actor = ProxyReplayerActor::new(proxy);
