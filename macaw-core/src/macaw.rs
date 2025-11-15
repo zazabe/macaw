@@ -21,10 +21,6 @@ impl<P: Processor> Macaw<P> {
     pub async fn wait_until_stopped(self) -> Result<(), AppError> {
         self.context.wait_until_exit().await
     }
-
-    pub fn processor_handle(&self) -> ActorHandle<P> {
-        self.processor.clone()
-    }
 }
 
 impl Macaw<Recorder> {
@@ -48,16 +44,17 @@ impl Macaw<Recorder> {
         Ok(())
     }
 
-    pub fn add_proxy_with_channel<P: ProxyActor>(
-        &mut self,
-        proxy: P,
-        rx: ActorChannelReceiver<P>,
-        tx: ActorChannelSender<P>,
-    ) -> Result<(), anyhow::Error> {
-        let proxy_id = proxy.id();
+    pub fn add_proxy<P, F>(&mut self, f: F) -> Result<(), anyhow::Error>
+    where
+        P: ProxyActor,
+        F: FnOnce(
+            &ActorHandle<Recorder>,
+            ActorContext,
+        ) -> Result<(ProxyId, ActorHandle<P>), anyhow::Error>,
+    {
         let actor_context = self.context.actor_context();
-        let handle = proxy.run_with_channel(&actor_context, tx, rx);
-        self.proxies.push(handle);
+        let (proxy_id, handle) = f(&self.processor, actor_context)?;
+        self.proxies.insert(proxy_id, handle);
         Ok(())
     }
 }
@@ -79,22 +76,20 @@ impl Macaw<Replayer> {
         self.processor.send(ReplayerCommand::Play)
     }
 
-    pub async fn add_proxy_with_channel<P>(
-        &mut self,
-        proxy: P,
-        rx: ActorChannelReceiver<P>,
-        tx: ActorChannelSender<P>,
-    ) -> Result<(), anyhow::Error>
+    pub async fn add_proxy<P, F>(&mut self, f: F) -> Result<(), anyhow::Error>
     where
         P: ProxyActor + ActorHandler<RecordedEventWithLock, Reply = ()>,
+        F: FnOnce(
+            &ActorHandle<Replayer>,
+            ActorContext,
+        ) -> Result<(ProxyId, ActorHandle<P>), anyhow::Error>,
     {
-        let proxy_id = proxy.id();
-        let proxy_sender = Box::new(tx.clone());
         let actor_context = self.context.actor_context();
-        let handle = proxy.run_with_channel(&actor_context, tx, rx);
-        self.proxies.push(handle);
+        let (proxy_id, handle) = f(&self.processor, actor_context)?;
+        let sender = handle.sender();
+        self.proxies.insert(proxy_id, handle);
         self.processor
-            .request(ReplayerCommand::RegisterProxy(proxy_id, proxy_sender))
+            .request(ReplayerCommand::RegisterProxy(proxy_id, Box::new(sender)))
             .await?;
         Ok(())
     }
@@ -103,15 +98,15 @@ impl Macaw<Replayer> {
 // ------------------------------------------------------------
 
 #[derive(Debug)]
-struct ProxyHandles(Vec<Box<dyn ErasedActorHandle>>);
+struct ProxyHandles(HashMap<ProxyId, Box<dyn ErasedActorHandle>>);
 
 impl ProxyHandles {
     fn new() -> Self {
-        Self(Vec::new())
+        Self(HashMap::new())
     }
 
-    fn push<H: ErasedActorHandle + 'static>(&mut self, handle: H) {
-        self.0.push(Box::new(handle));
+    fn insert<H: ErasedActorHandle + 'static>(&mut self, proxy_id: ProxyId, handle: H) {
+        self.0.insert(proxy_id, Box::new(handle));
     }
 }
 

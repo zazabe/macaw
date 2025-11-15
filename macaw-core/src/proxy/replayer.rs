@@ -59,15 +59,28 @@ impl<P: ProxyReplayer>
             P::DownstreamIncomingMessage,
             P::DownstreamOutgoingMessage,
         >,
-    ) -> Self::Reply {
+    ) {
         let DownstreamMessageWithResponseSender {
             message,
             response_sender,
         } = downstream;
         if let Err(e) = self
-            .handle_downstream_incoming(message, response_sender)
+            .handle_downstream_incoming(message, Some(response_sender))
             .await
         {
+            error!("Failed to handle downstream incoming message: {:?}", e);
+        }
+    }
+}
+
+impl<P: ProxyReplayer> ActorHandler<DownstreamMessage<P::DownstreamIncomingMessage>>
+    for ProxyReplayerActor<P>
+{
+    type Reply = ();
+
+    async fn handle(&mut self, downstream: DownstreamMessage<P::DownstreamIncomingMessage>) {
+        let DownstreamMessage { message } = downstream;
+        if let Err(e) = self.handle_downstream_incoming(message, None).await {
             error!("Failed to handle downstream incoming message: {:?}", e);
         }
     }
@@ -95,7 +108,7 @@ impl<P: ProxyReplayer> ProxyReplayerActor<P> {
     async fn handle_downstream_incoming(
         &mut self,
         msg: P::DownstreamIncomingMessage,
-        response_sender: ResponseSender<P::DownstreamOutgoingMessage>,
+        response_sender: Option<ResponseSender<P::DownstreamOutgoingMessage>>,
     ) -> Result<(), anyhow::Error> {
         debug!(
             "ProxyReplayerActor - Handling downstream incoming message: {:?}",

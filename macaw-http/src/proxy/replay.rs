@@ -36,12 +36,14 @@ impl ProxyReplayer for HttpReplayProxy {
     async fn downstream_incoming_process(
         &mut self,
         request: HttpRequestEvent,
-        response_sender: ResponseSender<HttpResponseEvent>,
+        response_sender: Option<ResponseSender<HttpResponseEvent>>,
     ) -> Result<(), anyhow::Error> {
         debug!(
             "HttpReplayProxy - Downstream incoming process: {:?}",
             request
         );
+        let response_sender =
+            response_sender.ok_or(anyhow::anyhow!("Response sender not found"))?;
         self.pending_requests
             .add_downstream_request(request, response_sender)
     }
@@ -245,8 +247,11 @@ impl HttpMacawReplaySetup for Macaw<Replayer> {
         let (tx, rx) = actor_channel::<ProxyReplayerActor<HttpReplayProxy>>();
         let proxy =
             HttpReplayProxy::new(proxy_id.parse()?, addr.parse()?, Box::new(tx.clone())).await?;
-        let actor = ProxyReplayerActor::new(proxy);
-        self.add_proxy_with_channel(actor, rx, tx).await?;
-        Ok(())
+        self.add_proxy(move |_replayer, actor_context| {
+            let proxy_id = proxy.id();
+            let actor = ProxyReplayerActor::new(proxy);
+            Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
+        })
+        .await
     }
 }

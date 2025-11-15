@@ -35,6 +35,12 @@ impl<T> ResponseSender<T> {
     }
 }
 
+impl<T> From<ReplySender<T>> for ResponseSender<T> {
+    fn from(sender: ReplySender<T>) -> Self {
+        Self::new(sender)
+    }
+}
+
 // ------------------------------------------------------------
 
 /// Channel to lock the replay of recordings, allowing to unlock it later or when dropping the lock.

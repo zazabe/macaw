@@ -68,6 +68,12 @@ pub struct UpstreamMessage<M> {
     pub(crate) message: M,
 }
 
+impl<M> UpstreamMessage<M> {
+    pub fn new(message: M) -> Self {
+        Self { message }
+    }
+}
+
 // ------------------------------------------------------------
 
 pub trait ProxyRecorder: Send + 'static {
@@ -131,7 +137,7 @@ pub trait ProxyReplayer: Send + 'static {
     fn downstream_incoming_process(
         &mut self,
         message: Self::DownstreamIncomingMessage,
-        response_sender: ResponseSender<Self::DownstreamOutgoingMessage>,
+        response_sender: Option<ResponseSender<Self::DownstreamOutgoingMessage>>,
     ) -> impl Future<Output = Result<(), anyhow::Error>> + Send {
         future::err(anyhow::anyhow!("Unexpected downstream message"))
     }

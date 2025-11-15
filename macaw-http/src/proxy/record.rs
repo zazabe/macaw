@@ -77,8 +77,10 @@ impl HttpMacawRecordSetup for Macaw<Recorder> {
             Box::new(tx.clone()),
         )
         .await?;
-        let actor = ProxyRecorderActor::new(proxy, self.processor_handle());
-        self.add_proxy_with_channel(actor, rx, tx)?;
-        Ok(())
+        self.add_proxy(move |recorder, actor_context| {
+            let proxy_id = proxy.id();
+            let actor = ProxyRecorderActor::new(proxy, recorder.clone());
+            Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
+        })
     }
 }

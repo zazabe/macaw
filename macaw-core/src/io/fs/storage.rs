@@ -78,6 +78,6 @@ impl EventStore {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = Event<Box<dyn RecordEvent>>> {
-        self.events.iter().map(|event| event.clone())
+        self.events.iter().cloned()
     }
 }
