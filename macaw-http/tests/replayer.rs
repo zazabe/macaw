@@ -8,19 +8,12 @@ async fn test_replayer_multiple_http_proxies() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/recordings.yaml");
     let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
 
-    let proxy1_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let proxy1_addr = proxy1_listener.local_addr().unwrap();
-    drop(proxy1_listener);
-    let proxy2_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let proxy2_addr = proxy2_listener.local_addr().unwrap();
-    drop(proxy2_listener);
-
-    macaw
-        .add_http_proxy("http_proxy1", &proxy1_addr.to_string())
+    let proxy1_addr = macaw
+        .add_http_proxy("http_proxy1", "127.0.0.1:0")
         .await
         .unwrap();
-    macaw
-        .add_http_proxy("http_proxy2", &proxy2_addr.to_string())
+    let proxy2_addr = macaw
+        .add_http_proxy("http_proxy2", "127.0.0.1:0")
         .await
         .unwrap();
 

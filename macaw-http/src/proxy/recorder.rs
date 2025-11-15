@@ -6,6 +6,32 @@ pub(crate) struct HttpRecorderProxy {
     target_url: TargetUrl,
     upstream: HttpClient,
     downstream: HttpServer,
+    listen_addr: SocketAddr,
+}
+
+impl HttpRecorderProxy {
+    pub(crate) async fn new(
+        proxy_id: ProxyId,
+        addr: SocketAddr,
+        target_url: TargetUrl,
+        sender: Box<dyn HttpServerRequestResolver>,
+    ) -> Result<Self, anyhow::Error> {
+        let upstream = HttpClient::new(addr)?;
+        let mut downstream = HttpServer::new(addr, sender);
+        let listen_addr = downstream.start().await?;
+
+        Ok(Self {
+            id: proxy_id,
+            target_url,
+            upstream,
+            downstream,
+            listen_addr,
+        })
+    }
+
+    pub(crate) fn listen_addr(&self) -> SocketAddr {
+        self.listen_addr
+    }
 }
 
 impl ProxyRecorder for HttpRecorderProxy {
@@ -31,26 +57,6 @@ impl ProxyRecorder for HttpRecorderProxy {
     }
 }
 
-impl HttpRecorderProxy {
-    pub(crate) async fn new(
-        proxy_id: ProxyId,
-        addr: SocketAddr,
-        target_url: TargetUrl,
-        sender: Box<dyn HttpServerRequestResolver>,
-    ) -> Result<Self, anyhow::Error> {
-        let upstream = HttpClient::new(addr)?;
-        let mut downstream = HttpServer::new(addr, sender);
-        downstream.start().await?;
-
-        Ok(Self {
-            id: proxy_id,
-            target_url,
-            upstream,
-            downstream,
-        })
-    }
-}
-
 // ------------------------------------------------------------
 
 pub trait HttpMacawRecordSetup {
@@ -59,7 +65,7 @@ pub trait HttpMacawRecordSetup {
         proxy_id: &str,
         addr: &str,
         target_url: &str,
-    ) -> impl Future<Output = Result<(), anyhow::Error>>;
+    ) -> impl Future<Output = Result<SocketAddr, anyhow::Error>>;
 }
 
 impl HttpMacawRecordSetup for Macaw<Recorder> {
@@ -68,7 +74,7 @@ impl HttpMacawRecordSetup for Macaw<Recorder> {
         proxy_id: &str,
         addr: &str,
         target_url: &str,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<SocketAddr, anyhow::Error> {
         let (tx, rx) = actor_channel::<ProxyRecorderActor<HttpRecorderProxy>>();
         let proxy = HttpRecorderProxy::new(
             proxy_id.parse()?,
@@ -77,10 +83,12 @@ impl HttpMacawRecordSetup for Macaw<Recorder> {
             Box::new(tx.clone()),
         )
         .await?;
+        let listen_addr = proxy.listen_addr();
         self.add_proxy(move |recorder, actor_context| {
             let proxy_id = proxy.id();
             let actor = ProxyRecorderActor::new(proxy, recorder.clone());
             Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
-        })
+        })?;
+        Ok(listen_addr)
     }
 }

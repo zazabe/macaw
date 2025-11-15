@@ -5,6 +5,7 @@ pub(crate) struct HttpReplayerProxy {
     id: ProxyId,
     downstream: HttpServer,
     pending_requests: PendingRequests,
+    listen_addr: SocketAddr,
 }
 
 impl HttpReplayerProxy {
@@ -14,13 +15,18 @@ impl HttpReplayerProxy {
         sender: Box<dyn HttpServerRequestResolver>,
     ) -> Result<Self, anyhow::Error> {
         let mut downstream = HttpServer::new(addr, sender);
-        downstream.start().await?;
+        let listen_addr = downstream.start().await?;
 
         Ok(Self {
             id: proxy_id,
             downstream,
             pending_requests: PendingRequests::new(),
+            listen_addr,
         })
+    }
+
+    pub(crate) fn listen_addr(&self) -> SocketAddr {
+        self.listen_addr
     }
 }
 
@@ -239,19 +245,25 @@ pub trait HttpMacawReplaySetup {
         &mut self,
         proxy_id: &str,
         addr: &str,
-    ) -> impl Future<Output = Result<(), anyhow::Error>>;
+    ) -> impl Future<Output = Result<SocketAddr, anyhow::Error>>;
 }
 
 impl HttpMacawReplaySetup for Macaw<Replayer> {
-    async fn add_http_proxy(&mut self, proxy_id: &str, addr: &str) -> Result<(), anyhow::Error> {
+    async fn add_http_proxy(
+        &mut self,
+        proxy_id: &str,
+        addr: &str,
+    ) -> Result<SocketAddr, anyhow::Error> {
         let (tx, rx) = actor_channel::<ProxyReplayerActor<HttpReplayerProxy>>();
         let proxy =
             HttpReplayerProxy::new(proxy_id.parse()?, addr.parse()?, Box::new(tx.clone())).await?;
+        let listen_addr = proxy.listen_addr();
         self.add_proxy(move |_replayer, actor_context| {
             let proxy_id = proxy.id();
             let actor = ProxyReplayerActor::new(proxy);
             Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
         })
-        .await
+        .await?;
+        Ok(listen_addr)
     }
 }

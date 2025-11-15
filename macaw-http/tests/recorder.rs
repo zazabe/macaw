@@ -23,27 +23,18 @@ async fn test_recorder_multiple_http_proxies() {
 
     let server_url = server.base_url();
 
-    // Get free ports for proxies by binding to port 0
-    let proxy1_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let proxy1_addr = proxy1_listener.local_addr().unwrap();
-    drop(proxy1_listener); // Close it so the proxy can bind to it
-
-    let proxy2_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let proxy2_addr = proxy2_listener.local_addr().unwrap();
-    drop(proxy2_listener); // Close it so the proxy can bind to it
-
     // Create recorder
     let mut macaw = Macaw::<Recorder>::recorder();
 
     // Add first HTTP proxy
-    macaw
-        .add_http_proxy("http_proxy1", &proxy1_addr.to_string(), &server_url)
+    let proxy1_addr = macaw
+        .add_http_proxy("http_proxy1", "127.0.0.1:0", &server_url)
         .await
         .unwrap();
 
     // Add second HTTP proxy
-    macaw
-        .add_http_proxy("http_proxy2", &proxy2_addr.to_string(), &server_url)
+    let proxy2_addr = macaw
+        .add_http_proxy("http_proxy2", "127.0.0.1:0", &server_url)
         .await
         .unwrap();
 
