@@ -1,0 +1,35 @@
+header:
+  record_id: ca718cde-b59d-41ad-bdf2-3b8d3b582b5a
+  record_seed: 362f20a6-fea2-4bfc-a8cf-700544625322
+  timestamp: 2025-11-15T09:10:48.058932638Z
+events:
+- proxy_id: !Named test_proxy1
+  timestamp: 2025-11-15T09:10:48.059142471Z
+  data:
+    type: RequestEvent
+    value: proxy1_event
+- proxy_id: !Named test_proxy1
+  timestamp: 2025-11-15T09:10:48.059154673Z
+  data:
+    type: ResponseEvent
+    value: response:proxy1_event
+- proxy_id: !Named test_proxy2
+  timestamp: 2025-11-15T09:10:48.059195901Z
+  data:
+    type: RequestEvent
+    value: proxy2_event
+- proxy_id: !Named test_proxy2
+  timestamp: 2025-11-15T09:10:48.059205098Z
+  data:
+    type: ResponseEvent
+    value: response:proxy2_event
+- proxy_id: !Named test_proxy1
+  timestamp: 2025-11-15T09:10:48.059246986Z
+  data:
+    type: IncomingEvent
+    value: incoming_event
+- proxy_id: !Named test_proxy2
+  timestamp: 2025-11-15T09:10:48.059256023Z
+  data:
+    type: IncomingEvent
+    value: incoming_event
