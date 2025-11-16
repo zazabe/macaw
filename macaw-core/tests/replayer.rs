@@ -11,6 +11,7 @@ use tokio::{
     sync::mpsc,
     time::{Duration, sleep},
 };
+use tracing::error;
 
 #[tokio::test]
 async fn test_replayer_multiple_proxies() {
@@ -18,14 +19,14 @@ async fn test_replayer_multiple_proxies() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/recordings.yaml");
     let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
 
-    let (tx1, rx1) = actor_channel::<ProxyReplayerActor<TestProxy>>();
+    let (tx1, rx1) = actor_channel::<TestProxyActor>();
     let (replay_tx1, mut replay_rx1) = mpsc::unbounded_channel::<TestEvent>();
     let sender1 = tx1.clone();
     macaw
         .add_test_proxy("test_proxy1", tx1, rx1, replay_tx1)
         .await
         .unwrap();
-    let (tx2, rx2) = actor_channel::<ProxyReplayerActor<TestProxy>>();
+    let (tx2, rx2) = actor_channel::<TestProxyActor>();
     let (replay_tx2, mut replay_rx2) = mpsc::unbounded_channel::<TestEvent>();
     let sender2 = tx2.clone();
     macaw
@@ -44,9 +45,9 @@ async fn test_replayer_multiple_proxies() {
 
     // Send request to proxy 1 and wait for response
     sender1
-        .send(DownstreamMessage::new(RequestEvent {
+        .send(RequestEvent {
             value: "proxy1_event".to_string(),
-        }))
+        })
         .unwrap();
     assert_eq!(
         replay_rx1.recv().await.unwrap(),
@@ -57,9 +58,9 @@ async fn test_replayer_multiple_proxies() {
 
     // Send request to proxy 2 and wait for response
     sender2
-        .send(DownstreamMessage::new(RequestEvent {
+        .send(RequestEvent {
             value: "proxy2_event".to_string(),
-        }))
+        })
         .unwrap();
 
     assert_eq!(
@@ -117,8 +118,8 @@ enum TestEvent {
     Incoming(IncomingEvent),
 }
 
-impl RecordEventUntagged for TestEvent {
-    fn downcast(event: Box<dyn RecordEvent>) -> anyhow::Result<Self, Box<dyn RecordEvent>>
+impl TestEvent {
+    fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, anyhow::Error>
     where
         Self: Sized,
     {
@@ -135,6 +136,7 @@ impl RecordEventUntagged for TestEvent {
                     .downcast::<IncomingEvent>()
                     .map(|event| Self::Incoming(*event))
             })
+            .map_err(|event| anyhow::anyhow!("Failed to downcast test event: {:?}", event))
     }
 }
 
@@ -157,48 +159,35 @@ impl Recordings {
 }
 
 #[derive(Debug)]
-struct TestProxy {
-    id: ProxyId,
+struct TestProxyActor {
+    context: ActorContext,
+    proxy_id: ProxyId,
     recordings: Recordings,
     replay_tx: mpsc::UnboundedSender<TestEvent>,
 }
 
-impl TestProxy {
-    fn new(id: ProxyId, replay_tx: mpsc::UnboundedSender<TestEvent>) -> Self {
+impl TestProxyActor {
+    fn new(
+        context: ActorContext,
+        proxy_id: ProxyId,
+        replay_tx: mpsc::UnboundedSender<TestEvent>,
+    ) -> Self {
         Self {
-            id,
+            context,
+            proxy_id,
             recordings: Recordings::default(),
             replay_tx,
         }
     }
-}
 
-impl ProxyReplayer for TestProxy {
-    type DownstreamIncomingMessage = RequestEvent;
-    type DownstreamOutgoingMessage = ResponseEvent;
-    type RecordedMessage = TestEvent;
-
-    fn id(&self) -> ProxyId {
-        self.id
-    }
-
-    async fn downstream_incoming_process(
-        &mut self,
-        message: Self::DownstreamIncomingMessage,
-        response_sender: Option<ResponseSender<Self::DownstreamOutgoingMessage>>,
-    ) -> Result<(), anyhow::Error> {
-        self.recordings.unlock(&message);
-        Ok(())
-    }
-
-    async fn handle_recorded_message(
-        &mut self,
-        message: Self::RecordedMessage,
-        replay_lock: ReplayLockHolder,
-    ) -> Result<(), anyhow::Error> {
+    fn handle_event(&mut self, event: RecordedEventWithLock) -> Result<(), anyhow::Error> {
+        let RecordedEventWithLock {
+            event, replay_lock, ..
+        } = event;
+        let message = TestEvent::downcast(event)?;
         match &message {
             TestEvent::Request(event) => {
-                self.recordings.push(message, Some(replay_lock));
+                self.recordings.push(message.clone(), Some(replay_lock));
             }
             TestEvent::Response(event) => {
                 self.replay_tx.send(message.clone()).unwrap();
@@ -213,12 +202,41 @@ impl ProxyReplayer for TestProxy {
     }
 }
 
+impl Actor for TestProxyActor {
+    fn context(&self) -> &ActorContext {
+        &self.context
+    }
+}
+
+impl ProxyActor for TestProxyActor {
+    fn proxy_id(&self) -> ProxyId {
+        self.proxy_id
+    }
+}
+
+impl ActorHandler<RequestEvent> for TestProxyActor {
+    type Reply = ();
+
+    async fn handle(&mut self, request: RequestEvent) {
+        self.recordings.unlock(&request);
+    }
+}
+
+impl ActorHandler<RecordedEventWithLock> for TestProxyActor {
+    type Reply = ();
+
+    async fn handle(&mut self, event: RecordedEventWithLock) {
+        if let Err(e) = self.handle_event(event) {
+            error!("Failed to handle test event: {:?}", e);
+        }
+    }
+}
 trait TestMacawReplayerSetup {
     async fn add_test_proxy(
         &mut self,
         proxy_id: &str,
-        tx: ActorChannelSender<ProxyReplayerActor<TestProxy>>,
-        rx: ActorChannelReceiver<ProxyReplayerActor<TestProxy>>,
+        tx: ActorChannelSender<TestProxyActor>,
+        rx: ActorChannelReceiver<TestProxyActor>,
         replay_tx: mpsc::UnboundedSender<TestEvent>,
     ) -> Result<(), anyhow::Error>;
 }
@@ -227,15 +245,15 @@ impl TestMacawReplayerSetup for Macaw<Replayer> {
     async fn add_test_proxy(
         &mut self,
         proxy_id: &str,
-        tx: ActorChannelSender<ProxyReplayerActor<TestProxy>>,
-        rx: ActorChannelReceiver<ProxyReplayerActor<TestProxy>>,
+        tx: ActorChannelSender<TestProxyActor>,
+        rx: ActorChannelReceiver<TestProxyActor>,
         replay_tx: mpsc::UnboundedSender<TestEvent>,
     ) -> Result<(), anyhow::Error> {
-        let proxy_id = ProxyId::new(proxy_id).unwrap();
-        let proxy = TestProxy::new(proxy_id, replay_tx);
         self.add_proxy(move |_replayer, actor_context| {
-            let actor = ProxyReplayerActor::new(actor_context.clone(), proxy);
-            Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
+            let proxy_id: ProxyId = proxy_id.parse()?;
+            let context = actor_context.create_child(&proxy_id.to_string());
+            let actor = TestProxyActor::new(context, proxy_id, replay_tx);
+            Ok((proxy_id, actor.run_with_channel(tx, rx)))
         })
         .await?;
         Ok(())

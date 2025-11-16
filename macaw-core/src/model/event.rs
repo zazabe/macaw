@@ -60,26 +60,6 @@ impl dyn RecordEvent {
     }
 }
 
-/// Trait for downcasting a RecordEvent to different variants of `RecordEvent`, useful to produce wrap multiple `RecordEvent` in a single type as an enum.
-pub trait RecordEventUntagged: fmt::Debug + Send {
-    fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, Box<dyn RecordEvent>>
-    where
-        Self: Sized;
-}
-
-/// Used to implement traits not supported by some proxy, when the event is not expected (e.g. HTTP proxy is not expecting upstream incoming messages).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct UnexpectedEvent;
-
-#[typetag::serde]
-impl RecordEvent for UnexpectedEvent {}
-
-impl RecordEventUntagged for UnexpectedEvent {
-    fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, Box<dyn RecordEvent>> {
-        Err(event)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RecordHeader {
     pub(crate) record_id: String,

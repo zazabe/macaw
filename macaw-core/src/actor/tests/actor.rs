@@ -9,7 +9,7 @@ async fn test_actor_start_stop() {
     let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
-    let handle = actor.run(&actor_context);
+    let handle = actor.run();
 
     // Yield to allow actor to start
     tokio::task::yield_now().await;
@@ -36,8 +36,8 @@ async fn test_app_exit() {
     let state1 = actor1.state();
     let state2 = actor2.state();
 
-    let handle1 = actor1.run(&actor_context);
-    let handle2 = actor2.run(&actor_context);
+    let handle1 = actor1.run();
+    let handle2 = actor2.run();
 
     tokio::task::yield_now().await;
     assert!(state1.is_started());
@@ -72,8 +72,8 @@ async fn test_app_exit_with_error() {
     let state1 = actor1.state();
     let state2 = actor2.state();
 
-    let handle1 = actor1.run(&actor_context);
-    let handle2 = actor2.run(&actor_context);
+    let handle1 = actor1.run();
+    let handle2 = actor2.run();
 
     tokio::task::yield_now().await;
     assert!(state1.is_started());
@@ -112,7 +112,7 @@ async fn test_actor_send() {
     let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
-    let handle = actor.run(&actor_context);
+    let handle = actor.run();
 
     tokio::task::yield_now().await;
     assert!(state.is_started());
@@ -143,7 +143,7 @@ async fn test_actor_request() {
 
     let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
-    let handle = actor.run(&actor_context);
+    let handle = actor.run();
 
     // Yield to allow actor to start
     tokio::task::yield_now().await;
@@ -176,7 +176,7 @@ async fn test_actor_send_error_actor_stopped() {
     let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
-    let handle = actor.run(&actor_context);
+    let handle = actor.run();
 
     tokio::task::yield_now().await;
     assert!(state.is_started());
@@ -204,7 +204,7 @@ async fn test_actor_request_error_actor_stopped() {
     let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
-    let handle = actor.run(&actor_context);
+    let handle = actor.run();
 
     tokio::task::yield_now().await;
     assert!(state.is_started());
@@ -229,7 +229,7 @@ async fn test_actor_stopped_due_to_channel_closed() {
     let actor = TestActor::new(actor_context.clone());
     let state = actor.state();
 
-    let handle = actor.run(&actor_context);
+    let handle = actor.run();
 
     tokio::task::yield_now().await;
     assert!(state.is_started());
@@ -333,8 +333,8 @@ impl TestActorState {
         self.inner.lock().unwrap().stopped = value;
     }
 
-    fn set_stop_reason(&self, reason: Option<ActorStopReason>) {
-        self.inner.lock().unwrap().stop_reason = reason;
+    fn set_stop_reason(&self, reason: ActorStopReason) {
+        self.inner.lock().unwrap().stop_reason = Some(reason);
     }
 
     fn push_message(&self, message: String) {
@@ -367,11 +367,11 @@ impl Actor for TestActor {
         &self.context
     }
 
-    async fn on_start(&mut self, _context: &ActorContext) {
+    async fn on_start(&mut self) {
         self.state.set_started(true);
     }
 
-    async fn on_stop(&mut self, _context: &ActorContext, stop_reason: Option<ActorStopReason>) {
+    async fn on_stop(&mut self, stop_reason: ActorStopReason) {
         self.state.set_stopped(true);
         self.state.set_stop_reason(stop_reason);
     }

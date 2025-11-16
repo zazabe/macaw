@@ -1,6 +1,7 @@
 use macaw_core::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, sleep};
+use tracing::error;
 
 #[tokio::test]
 async fn test_recorder_multiple_proxies() {
@@ -9,10 +10,10 @@ async fn test_recorder_multiple_proxies() {
 
     // Create recorder
     let mut macaw = Macaw::<Recorder>::recorder();
-    let (tx, rx) = actor_channel::<ProxyRecorderActor<TestProxy>>();
+    let (tx, rx) = actor_channel::<TestProxyActor>();
     let sender1 = tx.clone();
     macaw.add_test_proxy("test_proxy1", tx, rx).await.unwrap();
-    let (tx, rx) = actor_channel::<ProxyRecorderActor<TestProxy>>();
+    let (tx, rx) = actor_channel::<TestProxyActor>();
     let sender2 = tx.clone();
     macaw.add_test_proxy("test_proxy2", tx, rx).await.unwrap();
 
@@ -24,19 +25,15 @@ async fn test_recorder_multiple_proxies() {
         value: "proxy2_event".to_string(),
     };
 
-    let _response1 = sender1
-        .request(DownstreamMessage::new(event1.clone()))
-        .await;
-    let _response2 = sender2
-        .request(DownstreamMessage::new(event2.clone()))
-        .await;
+    let _response1 = sender1.request(event1.clone()).await;
+    let _response2 = sender2.request(event2.clone()).await;
 
     // Send incoming event from both proxies
     let event3 = IncomingEvent {
         value: "incoming_event".to_string(),
     };
-    sender1.send(UpstreamMessage::new(event3.clone())).unwrap();
-    sender2.send(UpstreamMessage::new(event3.clone())).unwrap();
+    sender1.send(event3.clone()).unwrap();
+    sender2.send(event3.clone()).unwrap();
 
     // Give time for events to be recorded
     tokio::task::yield_now().await;
@@ -112,39 +109,59 @@ struct IncomingEvent {
 impl RecordEvent for IncomingEvent {}
 
 #[derive(Debug, Clone)]
-struct TestProxy {
-    id: ProxyId,
+struct TestProxyActor {
+    context: ActorContext,
+    proxy_id: ProxyId,
+    recorder: ActorHandle<Recorder>,
 }
 
-impl TestProxy {
-    fn new(id: ProxyId) -> Self {
-        Self { id }
+impl TestProxyActor {
+    fn new(context: ActorContext, proxy_id: ProxyId, recorder: ActorHandle<Recorder>) -> Self {
+        Self {
+            context,
+            proxy_id,
+            recorder,
+        }
     }
 }
 
-impl ProxyRecorder for TestProxy {
-    type DownstreamIncomingMessage = RequestEvent;
-    type DownstreamOutgoingMessage = ResponseEvent;
-    type UpstreamIncomingMessage = IncomingEvent;
-
-    fn id(&self) -> ProxyId {
-        self.id
+impl Actor for TestProxyActor {
+    fn context(&self) -> &ActorContext {
+        &self.context
     }
+}
 
-    async fn downstream_incoming_process(
-        &mut self,
-        message: Self::DownstreamIncomingMessage,
-    ) -> Result<Option<Self::DownstreamOutgoingMessage>, anyhow::Error> {
-        Ok(Some(ResponseEvent {
-            value: format!("response:{}", message.value),
-        }))
+impl ProxyActor for TestProxyActor {
+    fn proxy_id(&self) -> ProxyId {
+        self.proxy_id
     }
+}
 
-    async fn upstream_incoming_process(
-        &mut self,
-        message: Self::UpstreamIncomingMessage,
-    ) -> Result<(), anyhow::Error> {
-        Ok(())
+impl ActorHandler<RequestEvent> for TestProxyActor {
+    type Reply = Result<ResponseEvent, anyhow::Error>;
+
+    async fn handle(&mut self, request: RequestEvent) -> Result<ResponseEvent, anyhow::Error> {
+        self.recorder
+            .send(RecordedEvent::new(self.proxy_id, request.clone()))?;
+        let response = ResponseEvent {
+            value: format!("response:{}", request.value),
+        };
+        self.recorder
+            .send(RecordedEvent::new(self.proxy_id, response.clone()))?;
+        Ok(response)
+    }
+}
+
+impl ActorHandler<IncomingEvent> for TestProxyActor {
+    type Reply = ();
+
+    async fn handle(&mut self, event: IncomingEvent) {
+        if let Err(e) = self
+            .recorder
+            .send(RecordedEvent::new(self.proxy_id, event.clone()))
+        {
+            error!("Failed to record event: {:?}", e);
+        }
     }
 }
 
@@ -152,8 +169,8 @@ trait TestMacawRecordSetup {
     fn add_test_proxy(
         &mut self,
         proxy_id: &str,
-        tx: ActorChannelSender<ProxyRecorderActor<TestProxy>>,
-        rx: ActorChannelReceiver<ProxyRecorderActor<TestProxy>>,
+        tx: ActorChannelSender<TestProxyActor>,
+        rx: ActorChannelReceiver<TestProxyActor>,
     ) -> impl Future<Output = Result<(), anyhow::Error>>;
 }
 
@@ -161,14 +178,14 @@ impl TestMacawRecordSetup for Macaw<Recorder> {
     async fn add_test_proxy(
         &mut self,
         proxy_id: &str,
-        tx: ActorChannelSender<ProxyRecorderActor<TestProxy>>,
-        rx: ActorChannelReceiver<ProxyRecorderActor<TestProxy>>,
+        tx: ActorChannelSender<TestProxyActor>,
+        rx: ActorChannelReceiver<TestProxyActor>,
     ) -> Result<(), anyhow::Error> {
-        let proxy = TestProxy::new(proxy_id.parse()?);
         self.add_proxy(move |recorder, actor_context| {
-            let proxy_id = proxy.id();
-            let actor = ProxyRecorderActor::new(actor_context.clone(), proxy, recorder.clone());
-            Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
+            let proxy_id: ProxyId = proxy_id.parse()?;
+            let context = actor_context.create_child(&proxy_id.to_string());
+            let actor = TestProxyActor::new(context, proxy_id, recorder.clone());
+            Ok((proxy_id, actor.run_with_channel(tx, rx)))
         })?;
         Ok(())
     }

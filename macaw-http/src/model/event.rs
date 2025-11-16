@@ -8,8 +8,8 @@ pub(crate) enum HttpEvent {
     HttpResponse(HttpResponseEvent),
 }
 
-impl RecordEventUntagged for HttpEvent {
-    fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, Box<dyn RecordEvent>>
+impl HttpEvent {
+    pub(crate) fn downcast(event: Box<dyn RecordEvent>) -> Result<Self, anyhow::Error>
     where
         Self: Sized,
     {
@@ -17,7 +17,10 @@ impl RecordEventUntagged for HttpEvent {
             Ok(request) => Ok(HttpEvent::HttpRequest(*request)),
             Err(event) => match event.downcast::<HttpResponseEvent>() {
                 Ok(response) => Ok(HttpEvent::HttpResponse(*response)),
-                Err(event) => Err(event),
+                Err(event) => Err(anyhow::anyhow!(
+                    "Failed to downcast to HttpEvent, invalid event: {:?}",
+                    event
+                )),
             },
         }
     }

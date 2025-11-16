@@ -1,14 +1,28 @@
 use crate::lib::*;
 
 #[derive(Debug)]
-pub(crate) struct HttpReplayerProxy {
-    id: ProxyId,
+pub(crate) struct HttpProxyReplayerActor {
+    context: ActorContext,
+    proxy_id: ProxyId,
     downstream: HttpServer,
     pending_requests: PendingRequests,
 }
 
-impl HttpReplayerProxy {
+impl Actor for HttpProxyReplayerActor {
+    fn context(&self) -> &ActorContext {
+        &self.context
+    }
+}
+
+impl ProxyActor for HttpProxyReplayerActor {
+    fn proxy_id(&self) -> ProxyId {
+        self.proxy_id
+    }
+}
+
+impl HttpProxyReplayerActor {
     pub(crate) fn new(
+        context: ActorContext,
         proxy_id: ProxyId,
         addr: SocketAddr,
         sender: Box<dyn HttpServerRequestResolver>,
@@ -16,47 +30,25 @@ impl HttpReplayerProxy {
         let downstream = HttpServer::new(addr, sender);
 
         Ok(Self {
-            id: proxy_id,
+            context,
+            proxy_id,
             downstream,
             pending_requests: PendingRequests::new(),
         })
     }
 
-    pub(crate) async fn start(&self, context: &ActorContext) -> Result<SocketAddr, anyhow::Error> {
-        self.downstream.start(context).await
-    }
-}
-
-impl ProxyReplayer for HttpReplayerProxy {
-    type DownstreamIncomingMessage = HttpRequestEvent;
-    type DownstreamOutgoingMessage = HttpResponseEvent;
-    type RecordedMessage = HttpEvent;
-
-    fn id(&self) -> ProxyId {
-        self.id
+    pub(crate) async fn start(&self) -> Result<SocketAddr, anyhow::Error> {
+        self.downstream.start(self.context()).await
     }
 
-    async fn downstream_incoming_process(
+    async fn handle_event(
         &mut self,
-        request: HttpRequestEvent,
-        response_sender: Option<ResponseSender<HttpResponseEvent>>,
+        recorded_event: RecordedEventWithLock,
     ) -> Result<(), anyhow::Error> {
-        debug!(
-            "HttpReplayProxy - Downstream incoming process: {:?}",
-            request
-        );
-        let response_sender =
-            response_sender.ok_or(anyhow::anyhow!("Response sender not found"))?;
-        self.pending_requests
-            .add_downstream_request(request, response_sender)
-    }
-
-    async fn handle_recorded_message(
-        &mut self,
-        event: HttpEvent,
-        replay_lock: ReplayLockHolder,
-    ) -> Result<(), anyhow::Error> {
-        match event {
+        let RecordedEventWithLock {
+            event, replay_lock, ..
+        } = recorded_event;
+        match HttpEvent::downcast(event)? {
             HttpEvent::HttpRequest(request) => {
                 self.pending_requests
                     .add_replay_request(request, replay_lock)?;
@@ -65,12 +57,44 @@ impl ProxyReplayer for HttpReplayerProxy {
                 self.pending_requests.resolve_pending_request(response)?;
             }
         }
-        debug!(
-            "HttpReplayProxy - Handling recorded message, pending requests: {:?}",
-            self.pending_requests
-        );
-
         Ok(())
+    }
+
+    async fn handle_downstream_incoming(
+        &mut self,
+        request: HttpRequestEvent,
+        response_sender: ResponseSender<HttpResponseEvent>,
+    ) -> Result<(), anyhow::Error> {
+        self.pending_requests
+            .add_downstream_request(request, response_sender)
+    }
+}
+
+impl ActorHandler<RecordedEventWithLock> for HttpProxyReplayerActor {
+    type Reply = ();
+
+    async fn handle(&mut self, recorded_event: RecordedEventWithLock) {
+        if let Err(e) = self.handle_event(recorded_event).await {
+            error!("Failed to handle recorded event: {:?}", e);
+        }
+    }
+}
+
+impl ActorHandler<(HttpRequestEvent, ResponseSender<HttpResponseEvent>)>
+    for HttpProxyReplayerActor
+{
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        (request, response_sender): (HttpRequestEvent, ResponseSender<HttpResponseEvent>),
+    ) {
+        if let Err(e) = self
+            .handle_downstream_incoming(request, response_sender)
+            .await
+        {
+            error!("Failed to handle downstream incoming message: {:?}", e);
+        }
     }
 }
 
@@ -240,10 +264,10 @@ struct MatchedRequest {
 #[derive(Debug)]
 struct StartProxyEvent;
 
-impl ActorHandler<StartProxyEvent> for ProxyReplayerActor<HttpReplayerProxy> {
+impl ActorHandler<StartProxyEvent> for HttpProxyReplayerActor {
     type Reply = Result<SocketAddr, anyhow::Error>;
     async fn handle(&mut self, _event: StartProxyEvent) -> Result<SocketAddr, anyhow::Error> {
-        self.proxy().start(self.context()).await
+        self.start().await
     }
 }
 
@@ -261,13 +285,14 @@ impl MacawHttpReplayerSetup for Macaw<Replayer> {
         proxy_id: &str,
         addr: &str,
     ) -> Result<SocketAddr, anyhow::Error> {
-        let (tx, rx) = actor_channel::<ProxyReplayerActor<HttpReplayerProxy>>();
+        let (tx, rx) = actor_channel::<HttpProxyReplayerActor>();
         let (_proxy_id, handle) = self
             .add_proxy(move |_replayer, actor_context| {
-                let proxy_id = proxy_id.parse()?;
-                let proxy = HttpReplayerProxy::new(proxy_id, addr.parse()?, Box::new(tx.clone()))?;
-                let actor = ProxyReplayerActor::new(actor_context.clone(), proxy);
-                Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
+                let proxy_id: ProxyId = proxy_id.parse()?;
+                let context = actor_context.create_child(&proxy_id.to_string());
+                let sender = Box::new(tx.clone());
+                let actor = HttpProxyReplayerActor::new(context, proxy_id, addr.parse()?, sender)?;
+                Ok((proxy_id, actor.run_with_channel(tx, rx)))
             })
             .await?;
         let listen_addr = handle.request(StartProxyEvent).await??;

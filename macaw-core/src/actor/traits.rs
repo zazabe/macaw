@@ -9,40 +9,37 @@ use futures::FutureExt;
 pub trait Actor: Send + Sized + 'static {
     fn context(&self) -> &ActorContext;
 
-    fn on_start(&mut self, context: &ActorContext) -> impl Future<Output = ()> + Send {
-        debug!("Actor starting: {}", context.name);
+    fn on_start(&mut self) -> impl Future<Output = ()> + Send {
+        debug!("Actor starting: {}", self.context().name);
         futures::future::ready(())
     }
 
-    fn on_stop(
-        &mut self,
-        context: &ActorContext,
-        stop_reason: Option<ActorStopReason>,
-    ) -> impl Future<Output = ()> + Send {
+    fn on_stop(&mut self, reason: ActorStopReason) -> impl Future<Output = ()> + Send {
+        debug!("Actor stopped: {}", self.context().name);
         futures::future::ready(())
     }
 
-    fn on_error(&mut self, context: &ActorContext, error: anyhow::Error) {
-        error!("Actor stopped with error: {}", context.name);
-        context.exit_with_error(error);
+    fn on_error(&mut self, error: anyhow::Error) {
+        error!("Actor stopped with error: {}", self.context().name);
+        self.context().exit_with_error(error);
     }
 
     fn run_with_channel(
         self,
-        context: &ActorContext,
         tx: ActorChannelSender<Self>,
         rx: ActorChannelReceiver<Self>,
     ) -> ActorHandle<Self> {
+        let context = self.context().clone();
         let task = tokio::task::Builder::new()
             .name(&context.name)
-            .spawn(run_actor(self, rx, context.clone()));
+            .spawn(run_actor(self, rx));
 
-        ActorHandle::new(tx, context.clone())
+        ActorHandle::new(tx, context)
     }
 
-    fn run(self, context: &ActorContext) -> ActorHandle<Self> {
+    fn run(self) -> ActorHandle<Self> {
         let (tx, rx) = actor_channel::<Self>();
-        self.run_with_channel(context, tx, rx)
+        self.run_with_channel(tx, rx)
     }
 }
 
@@ -282,51 +279,51 @@ pub enum ActorStopReason {
 async fn run_actor<A>(
     mut actor: A,
     mut message_rx: ActorChannelReceiver<A>,
-    mut context: ActorContext,
 ) -> Result<(), anyhow::Error>
 where
     A: Actor + 'static,
 {
-    #[allow(unused_assignments)]
-    let mut stop_reason = None;
-    actor.on_start(&context).await;
+    let mut context = actor.context().clone();
+    let stop_reason: ActorStopReason;
+    actor.on_start().await;
     loop {
         if context.task_terminator.is_stopped() {
-            stop_reason = Some(ActorStopReason::TaskTerminatedReceived);
+            stop_reason = ActorStopReason::TaskTerminatedReceived;
             break;
         }
         match terminatable_future(&mut context, message_rx.recv()).await {
             TerminationReason::Finished(result) => match result {
                 Ok(message) => {
                     if let Err(e) = message.into_inner().handle_with_actor(&mut actor).await {
-                        actor.on_error(
-                            &context,
-                            anyhow::anyhow!("[{}] Failed to handle message: {}", context.name, e),
-                        );
-                        stop_reason = Some(ActorStopReason::FailedToHandleMessage);
+                        actor.on_error(anyhow::anyhow!(
+                            "[{}] Failed to handle message: {}",
+                            context.name,
+                            e
+                        ));
+                        stop_reason = ActorStopReason::FailedToHandleMessage;
                         break;
                     }
                 }
                 Err(e) => {
-                    actor.on_error(
-                        &context,
-                        anyhow::anyhow!("[{}] Channel closed, actor handle dropped?", context.name),
-                    );
-                    stop_reason = Some(ActorStopReason::ChannelClosed);
+                    actor.on_error(anyhow::anyhow!(
+                        "[{}] Channel closed, actor handle dropped?",
+                        context.name
+                    ));
+                    stop_reason = ActorStopReason::ChannelClosed;
                     break;
                 }
             },
             TerminationReason::TaskTerminatedReceived => {
-                stop_reason = Some(ActorStopReason::TaskTerminatedReceived);
+                stop_reason = ActorStopReason::TaskTerminatedReceived;
                 break;
             }
             TerminationReason::ExitNotificationReceived => {
-                stop_reason = Some(ActorStopReason::ExitNotificationReceived);
+                stop_reason = ActorStopReason::ExitNotificationReceived;
                 break;
             }
         }
     }
-    actor.on_stop(&context, stop_reason).await;
+    actor.on_stop(stop_reason).await;
     Ok(())
 }
 

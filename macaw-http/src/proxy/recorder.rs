@@ -1,56 +1,79 @@
 use crate::lib::*;
 
 #[derive(Debug)]
-pub(crate) struct HttpRecorderProxy {
+pub(crate) struct HttpProxyRecorderActor {
+    context: ActorContext,
     proxy_id: ProxyId,
     target_url: TargetUrl,
+    recorder: ActorHandle<Recorder>,
     upstream: HttpClient,
     downstream: HttpServer,
 }
 
-impl HttpRecorderProxy {
+impl Actor for HttpProxyRecorderActor {
+    fn context(&self) -> &ActorContext {
+        &self.context
+    }
+}
+
+impl ProxyActor for HttpProxyRecorderActor {
+    fn proxy_id(&self) -> ProxyId {
+        self.proxy_id
+    }
+}
+
+impl HttpProxyRecorderActor {
     pub(crate) fn new(
+        context: ActorContext,
         proxy_id: ProxyId,
         addr: SocketAddr,
         target_url: TargetUrl,
+        recorder: ActorHandle<Recorder>,
         sender: Box<dyn HttpServerRequestResolver>,
     ) -> Result<Self, anyhow::Error> {
         let upstream = HttpClient::new()?;
         let downstream = HttpServer::new(addr, sender);
 
         Ok(Self {
+            context,
             proxy_id,
             target_url,
+            recorder,
             upstream,
             downstream,
         })
     }
 
-    pub(crate) async fn start(&self, context: &ActorContext) -> Result<SocketAddr, anyhow::Error> {
-        self.downstream.start(context).await
-    }
-}
-
-impl ProxyRecorder for HttpRecorderProxy {
-    type DownstreamIncomingMessage = HttpRequestEvent;
-    type DownstreamOutgoingMessage = HttpResponseEvent;
-    type UpstreamIncomingMessage = UnexpectedEvent;
-
-    fn id(&self) -> ProxyId {
-        self.proxy_id
+    pub(crate) async fn start(&self) -> Result<SocketAddr, anyhow::Error> {
+        self.downstream.start(self.context()).await
     }
 
-    async fn downstream_incoming_process(
-        &mut self,
-        request: HttpRequestEvent,
-    ) -> Result<Option<HttpResponseEvent>, anyhow::Error> {
-        let mut request = request;
+    pub(crate) async fn send_request(
+        &self,
+        mut request: HttpRequestEvent,
+    ) -> Result<HttpResponseEvent, anyhow::Error> {
         request.uri = self.target_url.apply(&request.uri)?;
         let request_id = request.request_id;
         let req = request.to_request()?;
         let res = self.upstream.request(req).await?;
         let response = HttpResponseEvent::from_response(&res, request_id)?;
-        Ok(Some(response))
+        Ok(response)
+    }
+}
+
+impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
+    type Reply = Result<HttpResponseEvent, anyhow::Error>;
+
+    async fn handle(
+        &mut self,
+        request: HttpRequestEvent,
+    ) -> Result<HttpResponseEvent, anyhow::Error> {
+        self.recorder
+            .send(RecordedEvent::new(self.proxy_id, request.clone()))?;
+        let response = self.send_request(request).await?;
+        self.recorder
+            .send(RecordedEvent::new(self.proxy_id, response.clone()))?;
+        Ok(response)
     }
 }
 
@@ -59,10 +82,10 @@ impl ProxyRecorder for HttpRecorderProxy {
 #[derive(Debug)]
 struct StartProxyEvent;
 
-impl ActorHandler<StartProxyEvent> for ProxyRecorderActor<HttpRecorderProxy> {
+impl ActorHandler<StartProxyEvent> for HttpProxyRecorderActor {
     type Reply = Result<SocketAddr, anyhow::Error>;
     async fn handle(&mut self, _event: StartProxyEvent) -> Result<SocketAddr, anyhow::Error> {
-        self.proxy().start(self.context()).await
+        self.start().await
     }
 }
 
@@ -83,17 +106,21 @@ impl MacawHttpRecorderSetup for Macaw<Recorder> {
         target_url: &str,
     ) -> Result<SocketAddr, anyhow::Error> {
         let (_proxy_id, handle) = self.add_proxy(move |recorder, actor_context| {
-            let (tx, rx) = actor_channel::<ProxyRecorderActor<HttpRecorderProxy>>();
-            let proxy = HttpRecorderProxy::new(
-                proxy_id.parse()?,
-                addr.parse()?,
-                target_url.parse()?,
-                Box::new(tx.clone()),
+            let proxy_id: ProxyId = proxy_id.parse()?;
+            let addr: SocketAddr = addr.parse()?;
+            let target_url: TargetUrl = target_url.parse()?;
+            let (tx, rx) = actor_channel::<HttpProxyRecorderActor>();
+            let sender = Box::new(tx.clone());
+            let context = actor_context.create_child(&proxy_id.to_string());
+            let actor = HttpProxyRecorderActor::new(
+                context,
+                proxy_id,
+                addr,
+                target_url,
+                recorder.clone(),
+                sender,
             )?;
-            let proxy_id = proxy.id();
-            let actor_context = actor_context.create_child(&proxy_id.to_string());
-            let actor = ProxyRecorderActor::new(actor_context.clone(), proxy, recorder.clone());
-            Ok((proxy_id, actor.run_with_channel(&actor_context, tx, rx)))
+            Ok((proxy_id, actor.run_with_channel(tx, rx)))
         })?;
         let listen_addr = handle.request(StartProxyEvent).await??;
         Ok(listen_addr)
