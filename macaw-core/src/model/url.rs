@@ -2,16 +2,17 @@ use crate::lib::*;
 
 #[derive(Debug, Clone)]
 pub struct TargetUrl {
-    scheme: http::uri::Scheme,
-    authority: http::uri::Authority,
+    pub scheme: http::uri::Scheme,
+    pub authority: http::uri::Authority,
 }
 
 impl TargetUrl {
-    pub fn apply(&self, other: &http::Uri) -> Result<http::Uri, anyhow::Error> {
-        Ok(http::uri::Builder::from(other.clone())
+    pub fn apply(&self, other: &http::Uri) -> http::Uri {
+        http::uri::Builder::from(other.clone())
             .scheme(self.scheme.clone())
             .authority(self.authority.clone())
-            .build()?)
+            .build()
+            .expect("Bug: Types are already converted, cannot fail")
     }
 }
 

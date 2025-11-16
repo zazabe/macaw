@@ -1,5 +1,5 @@
 [workspace]
-members = [ "macaw-core", "macaw-http" ]
+members = [ "macaw-core", "macaw-http", "macaw-ws" ]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,14 +12,14 @@ arrayvec = { version = "0.7", features = [ "serde" ] }
 async-trait = "0.1.85"
 async-stream = "0.3.5"
 base64 = "0.22"
-bytes = "1.2"
+bytes = { version = "1.11", features = [ "serde" ] }
 chrono = { version = "0.4", features = [ "serde" ] }
 dyn-clone = "1.0.17"
 dyn-clonable = "0.9.0"
 futures = "0.3"
 http = "1"
 http-body-util = "0.1"
-hyper = { version = "1", features = [ "full" ] }
+hyper = { version = "1.8", features = [ "full" ] }
 hyper-rustls = { version = "0.27", features = [ "http1", "http2", "rustls-platform-verifier" ] }
 hyper-util = { version = "0.1", features = [ "full" ] }
 itertools = "0.14"
@@ -70,6 +70,7 @@ path = "examples/replayer.rs"
 [dependencies]
 macaw-core = { path = "macaw-core" }
 macaw-http = { path = "macaw-http" }
+macaw-ws = { path = "macaw-ws" }
 anyhow = "*"
 futures.workspace = true
 tracing.workspace = true

@@ -2,12 +2,14 @@ mod actor;
 mod io;
 mod macaw;
 mod model;
+mod parsing;
 mod processor;
 
 pub mod prelude {
     pub use crate::actor::*;
     pub use crate::macaw::*;
     pub use crate::model::*;
+    pub use crate::parsing::*;
     pub use crate::processor::*;
 }
 

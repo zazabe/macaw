@@ -115,6 +115,10 @@ impl ActorContext {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn create_child(&self, name: &str) -> Self {
         Self {
             name: self.name.clone() + ":" + name,

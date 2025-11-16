@@ -1,4 +1,4 @@
-pub(crate) mod http_method_serde {
+pub mod http_method_serde {
     use http::Method;
     use serde::{self, Deserialize, Deserializer, Serializer};
 
@@ -17,7 +17,7 @@ pub(crate) mod http_method_serde {
     }
 }
 
-pub(crate) mod http_uri_serde {
+pub mod http_uri_serde {
     use http::Uri;
     use serde::{self, Deserialize, Deserializer, Serializer};
 
@@ -37,7 +37,7 @@ pub(crate) mod http_uri_serde {
     }
 }
 
-pub(crate) mod http_version_serde {
+pub mod http_version_serde {
     use http::Version;
     use serde::{self, Deserialize, Deserializer, Serializer};
 
@@ -74,17 +74,17 @@ pub(crate) mod http_version_serde {
     }
 }
 
-pub(crate) mod http_status_serde {
+pub mod http_status_serde {
     use http::StatusCode;
     use serde::{self, Deserialize, Deserializer, Serializer};
 
-    pub(crate) fn serialize<S>(status: &StatusCode, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(status: &StatusCode, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         serializer.serialize_u16(status.as_u16())
     }
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<StatusCode, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<StatusCode, D::Error>
     where
         D: Deserializer<'de>,
     {

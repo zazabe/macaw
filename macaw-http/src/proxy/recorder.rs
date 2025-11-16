@@ -52,7 +52,7 @@ impl HttpProxyRecorderActor {
         &self,
         mut request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        request.uri = self.target_url.apply(&request.uri)?;
+        request.uri = self.target_url.apply(&request.uri);
         let request_id = request.request_id;
         let req = request.to_request()?;
         let res = self.upstream.request(req).await?;

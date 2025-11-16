@@ -1,5 +1,6 @@
 use macaw::core::*;
 use macaw::http::*;
+use macaw::ws::*;
 
 use tracing::info;
 
@@ -10,6 +11,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut macaw = Macaw::recorder();
     macaw
         .add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
+        .await?;
+    macaw
+        .add_ws_proxy("ws_demo", "127.0.0.1:8801", "wss://fstream.binance.com/")
         .await?;
 
     tokio::spawn({
