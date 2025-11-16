@@ -1,8 +1,5 @@
-use std::{borrow::Cow, marker::PhantomData};
-
 use crate::lib::*;
 use arrayvec::ArrayString;
-use futures::future;
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ProxyId(ArrayString<64>);

@@ -6,7 +6,7 @@ async fn test_actor_start_stop() {
     let app_context = AppContext::new();
     let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new(actor_context.clone());
+    let actor = TestActor::new(actor_context);
     let state = actor.state();
 
     let handle = actor.run();
@@ -32,12 +32,12 @@ async fn test_app_exit() {
     let actor_context = app_context.actor_context("test_actor_1");
 
     let actor1 = TestActor::new(actor_context.clone());
-    let actor2 = TestActor::new(actor_context.clone());
+    let actor2 = TestActor::new(actor_context);
     let state1 = actor1.state();
     let state2 = actor2.state();
 
-    let handle1 = actor1.run();
-    let handle2 = actor2.run();
+    let _handle1 = actor1.run();
+    let _handle2 = actor2.run();
 
     tokio::task::yield_now().await;
     assert!(state1.is_started());
@@ -68,12 +68,12 @@ async fn test_app_exit_with_error() {
     let actor_context = app_context.actor_context("test_actor_1");
 
     let actor1 = TestActor::new(actor_context.clone());
-    let actor2 = TestActor::new(actor_context.clone());
+    let actor2 = TestActor::new(actor_context);
     let state1 = actor1.state();
     let state2 = actor2.state();
 
-    let handle1 = actor1.run();
-    let handle2 = actor2.run();
+    let _handle1 = actor1.run();
+    let _handle2 = actor2.run();
 
     tokio::task::yield_now().await;
     assert!(state1.is_started());
@@ -109,7 +109,7 @@ async fn test_actor_send() {
     let app_context = AppContext::new();
     let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new(actor_context.clone());
+    let actor = TestActor::new(actor_context);
     let state = actor.state();
 
     let handle = actor.run();
@@ -141,7 +141,7 @@ async fn test_actor_request() {
     let app_context = AppContext::new();
     let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new(actor_context.clone());
+    let actor = TestActor::new(actor_context);
     let state = actor.state();
     let handle = actor.run();
 
@@ -173,7 +173,7 @@ async fn test_actor_send_error_actor_stopped() {
     let app_context = AppContext::new();
     let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new(actor_context.clone());
+    let actor = TestActor::new(actor_context);
     let state = actor.state();
 
     let handle = actor.run();
@@ -201,7 +201,7 @@ async fn test_actor_request_error_actor_stopped() {
     let app_context = AppContext::new();
     let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new(actor_context.clone());
+    let actor = TestActor::new(actor_context);
     let state = actor.state();
 
     let handle = actor.run();
@@ -226,7 +226,7 @@ async fn test_actor_stopped_due_to_channel_closed() {
     let app_context = AppContext::new();
     let actor_context = app_context.actor_context("test_actor");
 
-    let actor = TestActor::new(actor_context.clone());
+    let actor = TestActor::new(actor_context);
     let state = actor.state();
 
     let handle = actor.run();
@@ -273,9 +273,6 @@ impl TestMessage {
 struct TestRequest {
     value: u32,
 }
-
-#[derive(Debug)]
-struct ErrorMessage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TestActorStateInner {

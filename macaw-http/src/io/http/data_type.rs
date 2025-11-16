@@ -21,10 +21,6 @@ impl BodyBytes {
     pub(crate) fn to_bytes(&self) -> &Bytes {
         &self.0
     }
-
-    pub(crate) fn empty() -> Self {
-        Self(Bytes::new())
-    }
 }
 
 impl From<String> for BodyBytes {

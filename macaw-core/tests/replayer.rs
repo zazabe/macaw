@@ -1,16 +1,6 @@
 use macaw_core::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-};
-use tokio::{
-    sync::mpsc,
-    time::{Duration, sleep},
-};
+use tokio::sync::mpsc;
 use tracing::error;
 
 #[tokio::test]
@@ -152,7 +142,7 @@ impl Recordings {
         let event = self.0.iter_mut().find(
             |(event, _)| matches!(event, TestEvent::Request(event) if event.value == request.value),
         );
-        if let Some((event, replay_lock)) = event {
+        if let Some((_event, replay_lock)) = event {
             let _ = replay_lock.take();
         }
     }
@@ -186,14 +176,10 @@ impl TestProxyActor {
         } = event;
         let message = TestEvent::downcast(event)?;
         match &message {
-            TestEvent::Request(event) => {
+            TestEvent::Request(..) => {
                 self.recordings.push(message.clone(), Some(replay_lock));
             }
-            TestEvent::Response(event) => {
-                self.replay_tx.send(message.clone()).unwrap();
-                self.recordings.push(message, None);
-            }
-            TestEvent::Incoming(event) => {
+            TestEvent::Response(..) | TestEvent::Incoming(..) => {
                 self.replay_tx.send(message.clone()).unwrap();
                 self.recordings.push(message, None);
             }

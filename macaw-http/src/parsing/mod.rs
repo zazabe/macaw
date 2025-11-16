@@ -1,3 +1,3 @@
 mod http;
 
-pub use http::*;
+pub(crate) use http::*;

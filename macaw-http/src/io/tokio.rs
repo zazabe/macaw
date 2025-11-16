@@ -16,10 +16,6 @@ impl<T> TokioIo<T> {
     pub fn new(inner: T) -> Self {
         Self { inner }
     }
-
-    pub fn inner(self) -> T {
-        self.inner
-    }
 }
 
 impl<T> hyper::rt::Read for TokioIo<T>

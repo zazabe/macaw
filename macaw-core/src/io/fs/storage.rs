@@ -1,6 +1,6 @@
 use crate::lib::*;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufReader;
 use tokio::fs::File as TokioFile;
 use tokio::io::AsyncWriteExt;
 
@@ -14,7 +14,6 @@ pub(crate) struct RecordFile {
 pub(crate) struct EventStore {
     header: RecordHeader,
     events: Vec<Event<Box<dyn RecordEvent>>>,
-    index: usize,
 }
 
 impl EventStore {
@@ -22,7 +21,6 @@ impl EventStore {
         Self {
             header: RecordHeader::new(),
             events: Vec::new(),
-            index: 0,
         }
     }
 
@@ -42,7 +40,6 @@ impl EventStore {
         Ok(Self {
             header: rf.header,
             events: rf.events,
-            index: 0,
         })
     }
 

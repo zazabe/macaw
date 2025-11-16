@@ -133,7 +133,7 @@ impl PendingRequests {
                     }));
                     replay_lock.unlock();
                 }
-                request => {
+                _request => {
                     return Err(anyhow::anyhow!("Invalid request state"));
                 }
             },
@@ -254,6 +254,7 @@ struct DownstreamRequest {
 
 #[derive(Debug)]
 struct MatchedRequest {
+    #[allow(unused)]
     downstream: HttpRequestEvent,
     replay: HttpRequestEvent,
     response_sender: ResponseSender<HttpResponseEvent>,

@@ -54,7 +54,7 @@ impl HttpServer {
                 }
             }
         };
-        let task: tokio::task::JoinHandle<TerminationReason<Result<(), anyhow::Error>>> =
+        let _task: tokio::task::JoinHandle<TerminationReason<Result<(), anyhow::Error>>> =
             context.spawn("http-server", fut)?;
         Ok(local_addr)
     }

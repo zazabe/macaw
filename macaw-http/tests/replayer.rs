@@ -1,6 +1,5 @@
 use macaw_core::prelude::*;
 use macaw_http::prelude::*;
-use tokio::time::{Duration, sleep};
 
 #[tokio::test]
 async fn test_replayer_multiple_http_proxies() {

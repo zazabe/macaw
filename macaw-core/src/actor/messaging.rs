@@ -248,6 +248,6 @@ impl<T> ReplySender<T> {
     pub fn send(self, value: T) -> Result<(), anyhow::Error> {
         self.tx
             .send(value)
-            .map_err(|e| anyhow::anyhow!("Failed to send reply"))
+            .map_err(|_| anyhow::anyhow!("Failed to send reply"))
     }
 }

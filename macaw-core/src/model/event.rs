@@ -96,14 +96,6 @@ impl<D> Event<D> {
     }
 }
 
-impl Event<Box<dyn RecordEvent>> {
-    pub(crate) fn downcast_data<T: RecordEvent + 'static>(
-        self,
-    ) -> Result<Box<T>, Box<dyn RecordEvent>> {
-        self.data.downcast::<T>()
-    }
-}
-
 // ----------------------------------------
 
 #[dyn_clonable::clonable]

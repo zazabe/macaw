@@ -1,7 +1,5 @@
 use macaw_core::prelude::*;
 use macaw_http::prelude::*;
-use std::net::SocketAddr;
-use tokio::time::{Duration, sleep};
 
 #[tokio::test]
 async fn test_recorder_multiple_http_proxies() {

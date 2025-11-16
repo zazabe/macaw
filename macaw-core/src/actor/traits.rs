@@ -1,6 +1,3 @@
-use std::marker::PhantomData;
-
-use pin_project_lite::pin_project;
 use tokio::task::JoinHandle;
 
 use crate::lib::*;
@@ -15,7 +12,11 @@ pub trait Actor: Send + Sized + 'static {
     }
 
     fn on_stop(&mut self, reason: ActorStopReason) -> impl Future<Output = ()> + Send {
-        debug!("Actor stopped: {}", self.context().name);
+        debug!(
+            "Actor stopped: {}, reason: {:?}",
+            self.context().name,
+            reason
+        );
         futures::future::ready(())
     }
 
@@ -30,7 +31,7 @@ pub trait Actor: Send + Sized + 'static {
         rx: ActorChannelReceiver<Self>,
     ) -> ActorHandle<Self> {
         let context = self.context().clone();
-        let task = tokio::task::Builder::new()
+        let _task = tokio::task::Builder::new()
             .name(&context.name)
             .spawn(run_actor(self, rx));
 
@@ -75,10 +76,12 @@ impl AppContext {
         self.terminate.exit_handle()
     }
 
+    #[allow(unused)]
     pub(crate) fn exit(&self) {
         self.terminate.exit();
     }
 
+    #[allow(unused)]
     pub(crate) fn exit_with_error(&self, error: anyhow::Error) {
         self.terminate.exit_with_error(error);
     }
@@ -304,7 +307,7 @@ where
                         break;
                     }
                 }
-                Err(e) => {
+                Err(_) => {
                     actor.on_error(anyhow::anyhow!(
                         "[{}] Channel closed, actor handle dropped?",
                         context.name
