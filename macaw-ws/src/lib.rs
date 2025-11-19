@@ -18,5 +18,4 @@ pub(crate) mod lib {
     pub(crate) use std::fmt;
     pub(crate) use std::net::SocketAddr;
     pub(crate) use tracing::{debug, error, info};
-    pub(crate) use uuid::Uuid;
 }

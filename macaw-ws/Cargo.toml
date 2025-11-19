@@ -25,4 +25,4 @@ itertools.workspace = true
 tracing.workspace = true
 dyn-clonable.workspace = true
 bytes.workspace = true
-uuid.workspace = true
+ahash.workspace = true

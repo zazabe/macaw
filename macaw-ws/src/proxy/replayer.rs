@@ -5,10 +5,11 @@ pub(crate) struct WsProxyReplayerActor {
     context: ActorContext,
     proxy_id: ProxyId,
     downstream: WsServer,
+    events: WsPendingEvents,
 }
 
 impl WsProxyReplayerActor {
-    pub(crate) fn new(
+    fn new(
         context: ActorContext,
         proxy_id: ProxyId,
         addr: SocketAddr,
@@ -21,25 +22,98 @@ impl WsProxyReplayerActor {
             context,
             proxy_id,
             downstream,
+            events: WsPendingEvents::new(),
         })
     }
 
-    pub(crate) async fn start(&self) -> Result<SocketAddr, anyhow::Error> {
+    async fn start(&self) -> Result<SocketAddr, anyhow::Error> {
         self.downstream.start(self.context()).await
     }
 
-    pub(crate) async fn handle_downstream_event(
+    async fn handle_downstream_event(
         &mut self,
-        _peer_id: WsPeerId,
-        _event: WsEvent,
+        peer_id: WsPeerId,
+        event: WsEvent,
     ) -> Result<(), anyhow::Error> {
+        let replay_event = self.events.remove_replay(peer_id, &event);
+        match replay_event {
+            Some(event) => {
+                // replay event found, release the lock
+                event.lock.release();
+            }
+            None => {
+                // Wait for the downstream event to be replayed
+                self.events.insert_downstream(peer_id, event);
+            }
+        }
         Ok(())
     }
 
-    pub(crate) async fn handle_recorded_message(
+    async fn handle_recorded_message(
         &mut self,
-        _event: RecordedEventWithLock,
+        record: RecordedEventWithLock,
     ) -> Result<(), anyhow::Error> {
+        let RecordedEventWithLock {
+            event, replay_lock, ..
+        } = record;
+
+        match event.downcast::<WsUpstreamEvent>() {
+            Ok(event) => {
+                self.handle_recorded_upstream_message(*event, replay_lock)
+                    .await
+            }
+            Err(event) => match event.downcast::<WsDownstreamEvent>() {
+                Ok(event) => {
+                    self.handle_recorded_downstream_message(*event, replay_lock)
+                        .await
+                }
+                Err(event) => Err(anyhow::anyhow!(
+                    "Failed to downcast to WsEvent: {:?}",
+                    event
+                )),
+            },
+        }
+    }
+
+    async fn handle_recorded_upstream_message(
+        &mut self,
+        record: WsUpstreamEvent,
+        replay_lock: ReplayLockHolder,
+    ) -> Result<(), anyhow::Error> {
+        // upstream messages should already have a connection established
+        // the replay can be released immediately
+        replay_lock.release();
+        let peer_id = record.peer_id;
+        match record.event {
+            WsEvent::Message(message_event) => {
+                self.downstream.send(peer_id, message_event.message)?;
+            }
+            WsEvent::Open(..) => {
+                // ignored, upstream open is not recorded
+            }
+            WsEvent::Disconnect => {
+                self.downstream.disconnect(peer_id)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_recorded_downstream_message(
+        &mut self,
+        record: WsDownstreamEvent,
+        replay_lock: ReplayLockHolder,
+    ) -> Result<(), anyhow::Error> {
+        // block replay until the downstream message is received
+        let downstream_event = self.events.remove_downstream(record.peer_id, &record.event);
+        match downstream_event {
+            Some(..) => {
+                replay_lock.release();
+            }
+            None => {
+                self.events
+                    .insert_replay(record.peer_id, record.event, replay_lock);
+            }
+        }
         Ok(())
     }
 }
@@ -74,6 +148,71 @@ impl ActorHandler<RecordedEventWithLock> for WsProxyReplayerActor {
         if let Err(e) = self.handle_recorded_message(event).await {
             error!("Failed to handle recorded message: {:?}", e);
         }
+    }
+}
+
+// ------------------------------------------------------------
+
+#[derive(Debug)]
+struct WsPendingDownstreamEvent {
+    peer_id: WsPeerId,
+    event: WsEvent,
+}
+
+#[derive(Debug)]
+struct WsPendingReplayEvent {
+    peer_id: WsPeerId,
+    event: WsEvent,
+    lock: ReplayLockHolder,
+}
+
+#[derive(Debug)]
+struct WsPendingEvents {
+    downstream: Vec<WsPendingDownstreamEvent>,
+    replay: Vec<WsPendingReplayEvent>,
+}
+
+impl WsPendingEvents {
+    fn new() -> Self {
+        Self {
+            downstream: Vec::new(),
+            replay: Vec::new(),
+        }
+    }
+
+    fn remove_downstream(
+        &mut self,
+        peer_id: WsPeerId,
+        event: &WsEvent,
+    ) -> Option<WsPendingDownstreamEvent> {
+        self.downstream
+            .iter()
+            .position(|e| e.peer_id == peer_id && e.event.fingerprint() == event.fingerprint())
+            .map(|index| self.downstream.remove(index))
+    }
+
+    fn remove_replay(
+        &mut self,
+        peer_id: WsPeerId,
+        event: &WsEvent,
+    ) -> Option<WsPendingReplayEvent> {
+        self.replay
+            .iter()
+            .position(|e| e.peer_id == peer_id && e.event.fingerprint() == event.fingerprint())
+            .map(|index| self.replay.remove(index))
+    }
+
+    fn insert_downstream(&mut self, peer_id: WsPeerId, event: WsEvent) {
+        self.downstream
+            .push(WsPendingDownstreamEvent { peer_id, event });
+    }
+
+    fn insert_replay(&mut self, peer_id: WsPeerId, event: WsEvent, lock: ReplayLockHolder) {
+        self.replay.push(WsPendingReplayEvent {
+            peer_id,
+            event,
+            lock,
+        });
     }
 }
 

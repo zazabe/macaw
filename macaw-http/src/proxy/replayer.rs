@@ -131,7 +131,7 @@ impl PendingRequests {
                         downstream: downstream.request,
                         response_sender: downstream.response_sender,
                     }));
-                    replay_lock.unlock();
+                    replay_lock.release();
                 }
                 _request => {
                     return Err(anyhow::anyhow!("Invalid request state"));
@@ -166,7 +166,7 @@ impl PendingRequests {
                         replay: replay.request,
                         response_sender,
                     }));
-                    replay.replay_lock.unlock();
+                    replay.replay_lock.release();
                 }
                 request => {
                     return Err(anyhow::anyhow!("Invalid request state: {:?}", request));

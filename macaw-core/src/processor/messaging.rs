@@ -63,13 +63,13 @@ impl ReplayLock {
 pub struct ReplayLockHolder(Arc<tokio::sync::Notify>);
 
 impl ReplayLockHolder {
-    pub fn unlock(&self) {
+    pub fn release(&self) {
         self.0.notify_one();
     }
 }
 
 impl Drop for ReplayLockHolder {
     fn drop(&mut self) {
-        self.unlock();
+        self.release();
     }
 }

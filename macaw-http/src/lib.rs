@@ -10,7 +10,6 @@ pub(crate) mod lib {
     pub(crate) use crate::io::*;
     pub(crate) use crate::model::*;
     pub(crate) use crate::proxy::*;
-    pub(crate) use http::HeaderName;
     pub(crate) use itertools::Itertools;
     pub(crate) use macaw_core::prelude::*;
     pub(crate) use serde::{Deserialize, Serialize};

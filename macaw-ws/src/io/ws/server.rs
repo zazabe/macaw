@@ -43,9 +43,10 @@ impl WsServer {
             let context = context.clone();
             async move {
                 let context = context.clone();
+                let mut conn_id = 0;
                 let mut conns = pin!(listen_tcp(listener).await);
                 while let Some(Ok(((sink, stream), request))) = conns.next().await {
-                    let peer_id = WsPeerId::new();
+                    let peer_id = WsPeerId::new(conn_id);
                     let peer_actor = WsPeerActor::new(
                         peer_id,
                         context.create_child(&format!("peer-downstream-{}", peer_id)),
@@ -56,6 +57,7 @@ impl WsServer {
                     )?;
                     let peer_handle = peer_actor.run();
                     peers.insert(peer_id, peer_handle);
+                    conn_id += 1;
                 }
                 Ok::<(), anyhow::Error>(())
             }

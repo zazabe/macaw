@@ -39,6 +39,8 @@ url = "2.5.2"
 uuid = { version = "1.13", features = [ "v4", "serde" ] }
 take_mut = "0.2"
 thiserror = "2"
+ahash = "0.8"
+
 # For tests
 tempfile = "3"
 insta = { version = "1", features = [ "yaml", "redactions" ] }

@@ -19,18 +19,18 @@ impl fmt::Debug for Box<dyn WsPeerEventSender> {
 
 // ------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub(crate) struct WsPeerId(Uuid);
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WsPeerId(u8);
 
 impl WsPeerId {
-    pub(crate) fn new() -> Self {
-        Self(Uuid::new_v4())
+    pub(crate) fn new(id: u8) -> Self {
+        Self(id)
     }
 }
 
 impl fmt::Display for WsPeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", &self.0.simple().to_string()[..8])
+        write!(f, "{}", self.0)
     }
 }
 

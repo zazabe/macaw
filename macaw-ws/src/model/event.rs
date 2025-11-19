@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use tokio_tungstenite::tungstenite::{
     self,
     handshake::client::Request,
@@ -7,26 +8,32 @@ use tokio_tungstenite::tungstenite::{
 use crate::lib::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsUpstreamEvent(WsEvent);
+pub(crate) struct WsUpstreamEvent {
+    pub(crate) peer_id: WsPeerId,
+    pub(crate) event: WsEvent,
+}
 
 #[typetag::serde(name = "WsUpstream")]
 impl RecordEvent for WsUpstreamEvent {}
 
 impl WsUpstreamEvent {
-    pub(crate) fn new(event: WsEvent) -> Self {
-        Self(event)
+    pub(crate) fn new(peer_id: WsPeerId, event: WsEvent) -> Self {
+        Self { peer_id, event }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsDownstreamEvent(WsEvent);
+pub(crate) struct WsDownstreamEvent {
+    pub(crate) peer_id: WsPeerId,
+    pub(crate) event: WsEvent,
+}
 
 #[typetag::serde(name = "WsDownstream")]
 impl RecordEvent for WsDownstreamEvent {}
 
 impl WsDownstreamEvent {
-    pub(crate) fn new(event: WsEvent) -> Self {
-        Self(event)
+    pub(crate) fn new(peer_id: WsPeerId, event: WsEvent) -> Self {
+        Self { peer_id, event }
     }
 }
 
@@ -34,9 +41,20 @@ impl WsDownstreamEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum WsEvent {
-    Message(WsDownstreamMessageEvent),
+    Message(WsMessageEvent),
     Open(WsOpenEvent),
     Disconnect,
+}
+
+impl HasFingerprint for WsEvent {
+    fn hash_into(&self, hasher: &mut impl Hasher) {
+        core::mem::discriminant(self).hash(hasher);
+        match self {
+            Self::Message(message) => message.hash_into(hasher),
+            Self::Open(open) => open.hash_into(hasher),
+            Self::Disconnect => (),
+        }
+    }
 }
 
 impl WsEvent {
@@ -45,11 +63,11 @@ impl WsEvent {
     }
 
     pub(crate) fn message(message: WsMessage) -> Self {
-        Self::Message(WsDownstreamMessageEvent { message })
+        Self::Message(WsMessageEvent { message })
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) enum WsMessage {
     Text(String),
     Binary(Bytes),
@@ -96,40 +114,23 @@ impl TryFrom<tungstenite::Message> for WsMessage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsUpstreamMessageEvent {
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub(crate) struct WsMessageEvent {
     pub(crate) message: WsMessage,
 }
-
-#[typetag::serde(name = "WsUpstreamMessage")]
-impl RecordEvent for WsUpstreamMessageEvent {}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsDownstreamMessageEvent {
-    pub(crate) message: WsMessage,
-}
-
-#[typetag::serde(name = "WsDownstreamMessage")]
-impl RecordEvent for WsDownstreamMessageEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WsOpenEvent {
     pub(crate) request: HttpRequest,
 }
 
-#[typetag::serde(name = "WsOpen")]
-impl RecordEvent for WsOpenEvent {}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsCloseEvent {
-    pub(crate) reason: String,
-    pub(crate) code: u16,
+impl HasFingerprint for WsOpenEvent {
+    fn hash_into(&self, hasher: &mut impl Hasher) {
+        self.request.hash_into(hasher);
+    }
 }
 
-#[typetag::serde(name = "WsClose")]
-impl RecordEvent for WsCloseEvent {}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HttpRequest {
     #[serde(with = "http_method_serde")]
     pub(crate) method: http::Method,
@@ -178,5 +179,41 @@ impl HttpRequest {
             request = request.header(key.as_str(), value.as_str());
         }
         Ok(request.body(())?)
+    }
+}
+
+impl HasFingerprint for HttpRequest {
+    fn hash_into(&self, hasher: &mut impl Hasher) {
+        self.uri.hash(hasher);
+        self.method.hash(hasher);
+        self.version.hash(hasher);
+        for (key, value) in remove_standard_headers(&self.headers).iter() {
+            key.to_lowercase().hash(hasher);
+            value.to_lowercase().hash(hasher);
+        }
+    }
+}
+
+// ------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) struct Fingerprint(u64);
+
+pub(crate) trait HasFingerprint {
+    fn hash_into(&self, hasher: &mut impl Hasher);
+
+    fn fingerprint(&self) -> Fingerprint {
+        let mut hasher = ahash::AHasher::default();
+        self.hash_into(&mut hasher);
+        Fingerprint(hasher.finish())
+    }
+}
+
+impl<T> HasFingerprint for T
+where
+    T: Hash,
+{
+    fn hash_into(&self, hasher: &mut impl Hasher) {
+        self.hash(hasher);
     }
 }

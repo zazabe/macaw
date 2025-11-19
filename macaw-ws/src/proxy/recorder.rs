@@ -24,7 +24,7 @@ impl ProxyActor for WsProxyRecorderActor {
 }
 
 impl WsProxyRecorderActor {
-    pub(crate) fn new(
+    fn new(
         context: ActorContext,
         proxy_id: ProxyId,
         addr: SocketAddr,
@@ -48,11 +48,29 @@ impl WsProxyRecorderActor {
         })
     }
 
-    pub(crate) async fn start(&self) -> Result<SocketAddr, anyhow::Error> {
+    async fn start(&self) -> Result<SocketAddr, anyhow::Error> {
         self.downstream.start(self.context()).await
     }
 
-    pub(crate) async fn handle_downstream_event(
+    fn send_downstream_record(
+        &self,
+        peer_id: WsPeerId,
+        event: WsEvent,
+    ) -> Result<(), anyhow::Error> {
+        self.recorder.send(RecordedEvent::new(
+            self.proxy_id,
+            WsDownstreamEvent::new(peer_id, event),
+        ))
+    }
+
+    fn send_upstream_record(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
+        self.recorder.send(RecordedEvent::new(
+            self.proxy_id,
+            WsUpstreamEvent::new(peer_id, event),
+        ))
+    }
+
+    async fn handle_downstream_event(
         &mut self,
         peer_id: WsPeerId,
         event: WsEvent,
@@ -61,10 +79,7 @@ impl WsProxyRecorderActor {
             "Received downstream event for peer {}: {:?}",
             peer_id, event
         );
-        self.recorder.send(RecordedEvent::new(
-            self.proxy_id,
-            WsDownstreamEvent::new(event.clone()),
-        ))?;
+        self.send_downstream_record(peer_id, event.clone())?;
         match event {
             WsEvent::Message(event) => {
                 self.peers.get(peer_id)?.send(event.message)?;
@@ -91,7 +106,7 @@ impl WsProxyRecorderActor {
         Ok(())
     }
 
-    pub(crate) async fn handle_upstream_event(
+    async fn handle_upstream_event(
         &mut self,
         peer_id: WsPeerId,
         event: WsEvent,
@@ -99,10 +114,7 @@ impl WsProxyRecorderActor {
         debug!("Received upstream event for peer {}", peer_id);
         match &event {
             WsEvent::Message(message_event) => {
-                self.recorder.send(RecordedEvent::new(
-                    self.proxy_id,
-                    WsUpstreamEvent::new(event.clone()),
-                ))?;
+                self.send_upstream_record(peer_id, event.clone())?;
                 self.downstream
                     .send(peer_id, message_event.message.clone())?;
             }
