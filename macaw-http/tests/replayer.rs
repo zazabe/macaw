@@ -4,7 +4,7 @@ use macaw_http::prelude::*;
 #[tokio::test]
 async fn test_replayer_multiple_http_proxies() {
     let recording_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/recordings.yaml");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/recordings.json");
     let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
 
     let proxy1_addr = macaw

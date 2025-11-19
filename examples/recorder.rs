@@ -1,5 +1,5 @@
 use macaw::core::*;
-//use macaw::http::*;
+use macaw::http::*;
 use macaw::ws::*;
 
 use tracing::info;
@@ -9,9 +9,9 @@ async fn main() -> Result<(), anyhow::Error> {
     console_subscriber::init();
 
     let mut macaw = Macaw::recorder();
-    // macaw
-    //     .add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
-    //     .await?;
+    macaw
+        .add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
+        .await?;
     macaw
         .add_ws_proxy("ws_demo", "127.0.0.1:8801", "wss://fstream.binance.com/")
         .await?;
@@ -26,7 +26,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     });
 
-    if let Err(e) = macaw.record_when_exit("./data/record.yaml").await {
+    if let Err(e) = macaw.record_when_exit("./data/record.json").await {
         macaw::handle_app_error(e);
     }
     Ok(())

@@ -5,7 +5,7 @@ use tokio::fs::File as TokioFile;
 use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct RecordFile {
+pub struct RecordFile {
     pub(crate) header: RecordHeader,
     pub(crate) events: Vec<Event<Box<dyn RecordEvent>>>,
 }
@@ -24,14 +24,14 @@ impl EventStore {
         }
     }
 
-    /// Load all events from a single YAML document containing a top-level sequence.
+    /// Load all events from a single JSON document containing a top-level struct.
     pub(crate) fn from_file<P>(path: P) -> Result<Self, anyhow::Error>
     where
         P: AsRef<Path>,
     {
         let file = File::open(path.as_ref())?;
         let reader = BufReader::new(file);
-        let rf: RecordFile = serde_yaml::from_reader(reader)?;
+        let rf: RecordFile = serde_json::from_reader(reader)?;
         debug!(
             "Loaded {} events from file: {}",
             rf.events.len(),
@@ -43,7 +43,7 @@ impl EventStore {
         })
     }
 
-    /// Save header and events as a single YAML document with top-level struct asynchronously.
+    /// Save header and events as a single JSON document with top-level struct asynchronously.
     pub(crate) fn save_file<P>(
         &self,
         path: P,
@@ -62,7 +62,7 @@ impl EventStore {
         };
 
         async move {
-            let ser = serde_yaml::to_string(&rf)?;
+            let ser = serde_json::to_string_pretty(&rf)?;
             let mut file = TokioFile::create(path.as_ref()).await?;
             file.write_all(ser.as_bytes()).await?;
             file.flush().await?;

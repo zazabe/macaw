@@ -1,3 +1,3 @@
 mod fs;
 
-pub(crate) use fs::*;
+pub use fs::*;

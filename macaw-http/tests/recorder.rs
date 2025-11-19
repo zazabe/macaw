@@ -51,67 +51,91 @@ async fn test_recorder_multiple_http_proxies() {
     macaw.exit_handle().exit();
     macaw.record_when_exit(&test_file).await.unwrap();
 
-    let file_content: serde_yaml::Value =
-        serde_yaml::from_str(std::fs::read_to_string(test_file).unwrap().as_str()).unwrap();
-    insta::assert_yaml_snapshot!(file_content, {
-        r#"["header"]["record_id"]"# => "[record_id]",
-        r#"["header"]["record_seed"]"# => "[record_seed]",
-        r#".**["timestamp"]"# => "[timestamp]",
-        r#".**["request_id"]"# => "[request_id]",
-        r#".**["uri"]"# => "[uri]",
-        r#".**["host"]"# => "[host]",
-        r#".**["headers"]["date"]"# => "[date]",
+    let file_content: RecordFile =
+        serde_json::from_str(std::fs::read_to_string(test_file).unwrap().as_str()).unwrap();
+    insta::assert_json_snapshot!(file_content, {
+        r#".header.record_id"# => "[record_id]",
+        r#".header.record_seed"# => "[record_seed]",
+        r#".**.timestamp"# => "[timestamp]",
+        r#".**.request_id"# => "[request_id]",
+        r#".**.uri"# => "[uri]",
+        r#".**.headers.host"# => "[host]",
+        r#".**.headers.date"# => "[date]",
     }, @r#"
-    header:
-      record_id: "[record_id]"
-      record_seed: "[record_seed]"
-      timestamp: "[timestamp]"
-    events:
-      - proxy: http_proxy1
-        timestamp: "[timestamp]"
-        HttpRequest:
-          request_id: "[request_id]"
-          method: GET
-          uri: "[uri]"
-          version: HTTP/1.1
-          headers:
-            accept: "*/*"
-            host: "[host]"
-          body:
-            Empty: ~
-      - proxy: http_proxy1
-        timestamp: "[timestamp]"
-        HttpResponse:
-          request_id: "[request_id]"
-          status: 200
-          version: HTTP/1.1
-          headers:
-            content-length: "9"
-            date: "[date]"
-          body:
-            PlainText: response1
-      - proxy: http_proxy2
-        timestamp: "[timestamp]"
-        HttpRequest:
-          request_id: "[request_id]"
-          method: GET
-          uri: "[uri]"
-          version: HTTP/1.1
-          headers:
-            accept: "*/*"
-            host: "[host]"
-          body:
-            Empty: ~
-      - proxy: http_proxy2
-        timestamp: "[timestamp]"
-        HttpResponse:
-          request_id: "[request_id]"
-          status: 200
-          version: HTTP/1.1
-          headers:
-            content-length: "9"
-            date: "[date]"
-          body:
-            PlainText: response2
+    {
+      "header": {
+        "record_id": "[record_id]",
+        "record_seed": "[record_seed]",
+        "timestamp": "[timestamp]"
+      },
+      "events": [
+        {
+          "proxy": "http_proxy1",
+          "timestamp": "[timestamp]",
+          "HttpRequest": {
+            "request_id": "[request_id]",
+            "method": "GET",
+            "uri": "[uri]",
+            "version": "HTTP/1.1",
+            "headers": {
+              "accept": "*/*",
+              "host": "[host]"
+            },
+            "body": {
+              "Empty": null
+            }
+          }
+        },
+        {
+          "proxy": "http_proxy1",
+          "timestamp": "[timestamp]",
+          "HttpResponse": {
+            "request_id": "[request_id]",
+            "status": 200,
+            "version": "HTTP/1.1",
+            "headers": {
+              "content-length": "9",
+              "date": "[date]"
+            },
+            "body": {
+              "PlainText": "response1"
+            }
+          }
+        },
+        {
+          "proxy": "http_proxy2",
+          "timestamp": "[timestamp]",
+          "HttpRequest": {
+            "request_id": "[request_id]",
+            "method": "GET",
+            "uri": "[uri]",
+            "version": "HTTP/1.1",
+            "headers": {
+              "accept": "*/*",
+              "host": "[host]"
+            },
+            "body": {
+              "Empty": null
+            }
+          }
+        },
+        {
+          "proxy": "http_proxy2",
+          "timestamp": "[timestamp]",
+          "HttpResponse": {
+            "request_id": "[request_id]",
+            "status": 200,
+            "version": "HTTP/1.1",
+            "headers": {
+              "content-length": "9",
+              "date": "[date]"
+            },
+            "body": {
+              "PlainText": "response2"
+            }
+          }
+        }
+      ]
+    }
     "#);
 }

@@ -42,42 +42,64 @@ async fn test_recorder_multiple_proxies() {
     macaw.record_when_exit(&test_file).await.unwrap();
 
     assert!(test_file.exists(), "Record file should exist");
-    let file_content: serde_yaml::Value =
-        serde_yaml::from_str(std::fs::read_to_string(test_file).unwrap().as_str()).unwrap();
-    insta::assert_yaml_snapshot!(file_content, {
-        r#"["header"]["record_id"]"# => "[record_id]",
-        r#"["header"]["record_seed"]"# => "[record_seed]",
-        r#".**["timestamp"]"# => "[timestamp]",
+    let file_content: RecordFile =
+        serde_json::from_str(std::fs::read_to_string(test_file).unwrap().as_str()).unwrap();
+    insta::assert_json_snapshot!(file_content, {
+        r#".header.record_id"# => "[record_id]",
+        r#".header.record_seed"# => "[record_seed]",
+        r#".**.timestamp"# => "[timestamp]",
     }, @r#"
-    header:
-      record_id: "[record_id]"
-      record_seed: "[record_seed]"
-      timestamp: "[timestamp]"
-    events:
-      - proxy: test_proxy1
-        timestamp: "[timestamp]"
-        RequestEvent:
-          value: proxy1_event
-      - proxy: test_proxy1
-        timestamp: "[timestamp]"
-        ResponseEvent:
-          value: "response:proxy1_event"
-      - proxy: test_proxy2
-        timestamp: "[timestamp]"
-        RequestEvent:
-          value: proxy2_event
-      - proxy: test_proxy2
-        timestamp: "[timestamp]"
-        ResponseEvent:
-          value: "response:proxy2_event"
-      - proxy: test_proxy1
-        timestamp: "[timestamp]"
-        IncomingEvent:
-          value: incoming_event
-      - proxy: test_proxy2
-        timestamp: "[timestamp]"
-        IncomingEvent:
-          value: incoming_event
+    {
+      "header": {
+        "record_id": "[record_id]",
+        "record_seed": "[record_seed]",
+        "timestamp": "[timestamp]"
+      },
+      "events": [
+        {
+          "proxy": "test_proxy1",
+          "timestamp": "[timestamp]",
+          "RequestEvent": {
+            "value": "proxy1_event"
+          }
+        },
+        {
+          "proxy": "test_proxy1",
+          "timestamp": "[timestamp]",
+          "ResponseEvent": {
+            "value": "response:proxy1_event"
+          }
+        },
+        {
+          "proxy": "test_proxy2",
+          "timestamp": "[timestamp]",
+          "RequestEvent": {
+            "value": "proxy2_event"
+          }
+        },
+        {
+          "proxy": "test_proxy2",
+          "timestamp": "[timestamp]",
+          "ResponseEvent": {
+            "value": "response:proxy2_event"
+          }
+        },
+        {
+          "proxy": "test_proxy1",
+          "timestamp": "[timestamp]",
+          "IncomingEvent": {
+            "value": "incoming_event"
+          }
+        },
+        {
+          "proxy": "test_proxy2",
+          "timestamp": "[timestamp]",
+          "IncomingEvent": {
+            "value": "incoming_event"
+          }
+        }
+      ]
+    }
     "#);
 }
 

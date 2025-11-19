@@ -9,6 +9,7 @@ mod processor;
 pub mod prelude {
     pub use crate::actor::*;
     pub use crate::helper::*;
+    pub use crate::io::*;
     pub use crate::macaw::*;
     pub use crate::model::*;
     pub use crate::parsing::*;

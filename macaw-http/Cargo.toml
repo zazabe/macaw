@@ -37,6 +37,6 @@ futures.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 insta.workspace = true
-serde_yaml.workspace = true
+serde_json.workspace = true
 httpmock.workspace = true
 reqwest.workspace = true
