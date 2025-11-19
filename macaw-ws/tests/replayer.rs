@@ -31,3 +31,34 @@ async fn test_replayer_multiple_ws_proxies() -> Result<(), anyhow::Error> {
     client2.close().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_replayer_multiple_ws_conns() -> Result<(), anyhow::Error> {
+    let recording_path = test_path!().join("data/replayer-test_replayer_multiple_ws_conns.json");
+
+    let mut macaw = Macaw::<Replayer>::replayer(recording_path)?;
+    let proxy_addr = macaw.add_ws_proxy("ws_proxy1", "127.0.0.1:0").await?;
+
+    macaw.play()?;
+
+    let proxy_url = format!("ws://{}/", proxy_addr);
+    let mut client1 = WsTestClient::connect(&proxy_url).await?;
+    let mut client2 = WsTestClient::connect(&proxy_url).await?;
+
+    assert_eq!(client1.recv().await?, "msg1 for conn0");
+    assert_eq!(client2.recv().await?, "msg1 for conn1");
+
+    client1.send("hello from client1").await?;
+
+    assert_eq!(client1.recv().await?, "msg2 for conn0");
+    assert_eq!(client2.recv().await?, "msg2 for conn1");
+
+    client2.send("hello from client2").await?;
+
+    assert_eq!(client1.recv().await?, "echo: hello from client1");
+    assert_eq!(client2.recv().await?, "echo: hello from client2");
+
+    client1.close().await?;
+    client2.close().await?;
+    Ok(())
+}

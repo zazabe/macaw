@@ -1,25 +1,81 @@
 use futures::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 // ------------------------------------------------------------
 
+/// Unique identifier for a WebSocket connection.
+pub type ConnectionId = usize;
+
 /// Handle to an echo server that allows waiting for all connections to close.
 #[allow(unused)]
 pub struct EchoServerHandle {
-    connection_count: Arc<AtomicUsize>,
+    connections: Arc<Mutex<HashMap<ConnectionId, mpsc::UnboundedSender<Message>>>>,
+    next_conn_id: Arc<AtomicUsize>,
 }
 
 impl EchoServerHandle {
-    /// Waits until all active connections are dropped.
+    /// Waits until the connection count reaches the given value.
     #[allow(unused)]
-    pub async fn wait_all_connections_disconnected(&self) {
-        // Poll until connection count reaches zero
-        while self.connection_count.load(Ordering::SeqCst) > 0 {
+    pub async fn wait_conn_count(&self, count: usize) {
+        // Poll until connection count reaches the given value
+        while self.connections.lock().await.len() != count {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
+    }
+
+    /// Broadcasts a message to all active connections.
+    #[allow(unused)]
+    pub async fn broadcast(&self, message: &str) -> Result<usize, anyhow::Error> {
+        let connections = self.connections.lock().await;
+        let mut sent_count = 0;
+        let mut failed_conns = Vec::new();
+        for (conn_id, sender) in connections.iter() {
+            if sender.send(Message::text(message)).is_err() {
+                failed_conns.push(*conn_id);
+            } else {
+                sent_count += 1;
+            }
+        }
+
+        // Clean up failed connections
+        if !failed_conns.is_empty() {
+            drop(connections);
+            let mut connections = self.connections.lock().await;
+            for conn_id in failed_conns {
+                connections.remove(&conn_id);
+            }
+        }
+
+        Ok(sent_count)
+    }
+
+    /// Sends a message to a specific connection by ID.
+    #[allow(unused)]
+    pub async fn send_to(&self, conn_id: ConnectionId, message: &str) -> Result<(), anyhow::Error> {
+        let mut connections = self.connections.lock().await;
+        match connections.get(&conn_id) {
+            Some(sender) => {
+                if sender.send(Message::text(message)).is_err() {
+                    // Connection closed, remove it
+                    connections.remove(&conn_id);
+                    Err(anyhow::anyhow!("Connection {} closed", conn_id))
+                } else {
+                    Ok(())
+                }
+            }
+            None => Err(anyhow::anyhow!("Connection {} not found", conn_id)),
+        }
+    }
+
+    /// Returns a list of all active connection IDs.
+    #[allow(unused)]
+    pub async fn list_connections(&self) -> Vec<ConnectionId> {
+        let connections = self.connections.lock().await;
+        connections.keys().copied().collect()
     }
 }
 
@@ -39,10 +95,15 @@ pub async fn start_echo_server() -> Result<(std::net::SocketAddr, EchoServerHand
         .local_addr()
         .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?;
 
-    let connection_count = Arc::new(AtomicUsize::new(0));
+    let connections = Arc::new(Mutex::new(HashMap::<
+        ConnectionId,
+        mpsc::UnboundedSender<Message>,
+    >::new()));
+    let next_conn_id = Arc::new(AtomicUsize::new(0));
     let (ready_tx, ready_rx) = oneshot::channel();
 
-    let conn_counter = connection_count.clone();
+    let connections_clone = connections.clone();
+    let next_conn_id_clone = next_conn_id.clone();
 
     // Spawn the server to handle connections in the background
     tokio::spawn(async move {
@@ -61,37 +122,67 @@ pub async fn start_echo_server() -> Result<(std::net::SocketAddr, EchoServerHand
                     };
                     let (mut write, mut read) = ws_stream.split();
 
-                    // Increment connection count
-                    conn_counter.fetch_add(1, Ordering::SeqCst);
-                    let conn_counter = conn_counter.clone();
+                    // Assign a unique connection ID
+                    let conn_id = next_conn_id_clone.fetch_add(1, Ordering::SeqCst);
+
+                    // Create a channel for sending messages to this connection
+                    let (send_tx, mut send_rx) = mpsc::unbounded_channel::<Message>();
+
+                    // Register the connection
+                    {
+                        let mut conns = connections_clone.lock().await;
+                        conns.insert(conn_id, send_tx);
+                    }
+
+                    let connections_clone = connections_clone.clone();
 
                     // Handle each connection in a separate task
                     tokio::spawn(async move {
-                        while let Some(msg) = read.next().await {
-                            match msg {
-                                Ok(Message::Text(text)) => {
-                                    if write
-                                        .send(Message::Text(format!("echo: {}", text).into()))
-                                        .await
-                                        .is_err()
-                                    {
-                                        break;
+                        loop {
+                            tokio::select! {
+                                // Handle incoming messages from websocket
+                                msg_opt = read.next() => {
+                                    match msg_opt {
+                                        Some(Ok(Message::Text(text))) => {
+                                            if write
+                                                .send(Message::Text(format!("echo: {}", text).into()))
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Some(Ok(Message::Binary(data))) => {
+                                            if write.send(Message::Binary(data)).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Some(Ok(Message::Close(_))) => {
+                                            break;
+                                        }
+                                        Some(Err(_)) => break,
+                                        None => break,
+                                        _ => {}
                                     }
                                 }
-                                Ok(Message::Binary(data)) => {
-                                    if write.send(Message::Binary(data)).await.is_err() {
-                                        break;
+                                // Handle outgoing messages from channel
+                                msg_opt = send_rx.recv() => {
+                                    match msg_opt {
+                                        Some(msg) => {
+                                            if write.send(msg).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        None => break,
                                     }
                                 }
-                                Ok(Message::Close(_)) => {
-                                    break;
-                                }
-                                Err(_) => break,
-                                _ => {}
                             }
                         }
-                        // Decrement connection count when connection closes
-                        conn_counter.fetch_sub(1, Ordering::SeqCst);
+                        // Unregister the connection
+                        {
+                            let mut conns = connections_clone.lock().await;
+                            conns.remove(&conn_id);
+                        }
                     });
                 }
                 Err(e) => {
@@ -107,7 +198,13 @@ pub async fn start_echo_server() -> Result<(std::net::SocketAddr, EchoServerHand
         .await
         .map_err(|e| anyhow::anyhow!("Server failed to start: {}", e))?;
 
-    Ok((addr, EchoServerHandle { connection_count }))
+    Ok((
+        addr,
+        EchoServerHandle {
+            connections,
+            next_conn_id,
+        },
+    ))
 }
 
 // ------------------------------------------------------------
