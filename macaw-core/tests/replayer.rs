@@ -1,12 +1,12 @@
 use macaw_core::prelude::*;
+use macaw_core::test_path;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::error;
 
 #[tokio::test]
 async fn test_replayer_multiple_proxies() {
-    let recording_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/recordings.json");
+    let recording_path = test_path!().join("./data/recordings.json");
     let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
 
     let (tx1, rx1) = actor_channel::<TestProxyActor>();

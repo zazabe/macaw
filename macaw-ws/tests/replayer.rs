@@ -1,14 +1,14 @@
 mod common;
 
 use macaw_core::prelude::*;
+use macaw_core::test_path;
 use macaw_ws::prelude::*;
 
 use common::WsTestClient;
 
 #[tokio::test]
 async fn test_replayer_multiple_ws_proxies() -> Result<(), anyhow::Error> {
-    let recording_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/recordings.json");
+    let recording_path = test_path!().join("data/recordings.json");
 
     let mut macaw = Macaw::<Replayer>::replayer(recording_path)?;
     let proxy1_addr = macaw.add_ws_proxy("ws_proxy1", "127.0.0.1:0").await?;

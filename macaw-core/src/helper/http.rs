@@ -1,5 +1,6 @@
-use crate::lib::*;
 use http::header;
+
+use crate::lib::*;
 
 /// Remove standard HTTP headers from a HeaderMap
 pub fn remove_standard_headers(headers: &BTreeMap<String, String>) -> BTreeMap<String, String> {

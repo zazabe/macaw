@@ -34,6 +34,7 @@ tracing.workspace = true
 typetag.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
+once_cell.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
