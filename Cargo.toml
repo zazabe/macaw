@@ -3,8 +3,9 @@ members = [ "macaw-core", "macaw-http", "macaw-ws" ]
 
 [workspace.package]
 version = "0.1.0"
-authors = [ "Michel Meyer <michel@zazabe.fr>", "Reto" ]
+authors = [ "Michel Meyer <michel@zazabe.fr>", "Reto Kaiser" ]
 edition = "2024"
+license = "MIT"
 
 [workspace.dependencies]
 anyhow = "1"

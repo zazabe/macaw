@@ -210,4 +210,4 @@ This pattern allows protocols like HTTP (request/response) to work correctly in 
 
 ## License
 
-[Add your license information here]
+Licensed under the MIT license ([LICENSE](LICENSE) or http://opensource.org/licenses/MIT).
