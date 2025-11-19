@@ -1,0 +1,133 @@
+{
+    "header": {
+        "record_id": "513143fa-9308-47d6-a73f-baf033341712",
+        "record_seed": "d6bc2a35-2523-44a8-b81d-9af755685c1e",
+        "timestamp": "2025-11-15T10:42:45.756836562Z"
+    },
+    "events": [
+        {
+            "proxy": "ws_proxy1",
+            "timestamp": "2025-11-15T10:42:45.847408143Z",
+            "WsDownstream": {
+                "peer_id": 0,
+                "event": {
+                    "Open": {
+                        "request": {
+                            "method": "GET",
+                            "uri": "/",
+                            "version": "HTTP/1.1",
+                            "headers": {
+                                "host": "127.0.0.1:43047",
+                                "connection": "Upgrade",
+                                "upgrade": "websocket",
+                                "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+                                "sec-websocket-version": "13",
+                                "origin": "http://127.0.0.1:43047"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "proxy": "ws_proxy1",
+            "timestamp": "2025-11-15T10:42:45.848205080Z",
+            "WsDownstream": {
+                "peer_id": 0,
+                "event": {
+                    "Message": {
+                        "message": {
+                            "Text": "hello from proxy1"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "proxy": "ws_proxy1",
+            "timestamp": "2025-11-15T10:42:45.849132653Z",
+            "WsUpstream": {
+                "peer_id": 0,
+                "event": {
+                    "Message": {
+                        "message": {
+                            "Text": "echo: hello from proxy1"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "proxy": "ws_proxy1",
+            "timestamp": "2025-11-15T10:42:45.849549646Z",
+            "WsDownstream": {
+                "peer_id": 0,
+                "event": {
+                    "Disconnect": null
+                }
+            }
+        },
+        {
+            "proxy": "ws_proxy2",
+            "timestamp": "2025-11-15T10:42:45.850000000Z",
+            "WsDownstream": {
+                "peer_id": 0,
+                "event": {
+                    "Open": {
+                        "request": {
+                            "method": "GET",
+                            "uri": "/",
+                            "version": "HTTP/1.1",
+                            "headers": {
+                                "host": "127.0.0.1:40791",
+                                "connection": "Upgrade",
+                                "upgrade": "websocket",
+                                "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+                                "sec-websocket-version": "13",
+                                "origin": "http://127.0.0.1:40791"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "proxy": "ws_proxy2",
+            "timestamp": "2025-11-15T10:42:45.850500000Z",
+            "WsDownstream": {
+                "peer_id": 0,
+                "event": {
+                    "Message": {
+                        "message": {
+                            "Text": "hello from proxy2"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "proxy": "ws_proxy2",
+            "timestamp": "2025-11-15T10:42:45.851000000Z",
+            "WsUpstream": {
+                "peer_id": 0,
+                "event": {
+                    "Message": {
+                        "message": {
+                            "Text": "echo: hello from proxy2"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "proxy": "ws_proxy2",
+            "timestamp": "2025-11-15T10:42:45.851500000Z",
+            "WsDownstream": {
+                "peer_id": 0,
+                "event": {
+                    "Disconnect": null
+                }
+            }
+        }
+    ]
+}

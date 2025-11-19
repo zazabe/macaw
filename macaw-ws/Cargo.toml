@@ -26,3 +26,8 @@ tracing.workspace = true
 dyn-clonable.workspace = true
 bytes.workspace = true
 ahash.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+insta.workspace = true
+serde_json.workspace = true
