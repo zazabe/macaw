@@ -23,15 +23,9 @@ use macaw::ws::*;
 
 let mut macaw = Macaw::recorder();
 
-// Add HTTP proxy: listens on 127.0.0.1:8800, forwards to https://www.perdu.com/
-macaw.add_http_proxy("http_demo", "127.0.0.1:8800", "https://www.perdu.com/")
-    .await?;
+macaw.add_http_proxy("http_demo", "127.0.0.1:8800", "https://httpbin.org/").await?;
+macaw.add_ws_proxy("ws_demo", "127.0.0.1:8801", "wss://echo.websocket.org/").await?;
 
-// Add WebSocket proxy: listens on 127.0.0.1:8801, forwards to wss://fstream.binance.com/
-macaw.add_ws_proxy("ws_demo", "127.0.0.1:8801", "wss://fstream.binance.com/")
-    .await?;
-
-// Handle exit signal (e.g., Ctrl+C)
 tokio::spawn({
     let handle = macaw.exit_handle();
     async move {
@@ -41,7 +35,6 @@ tokio::spawn({
     }
 });
 
-// Save recording when exit signal is received
 macaw.record_when_exit("./data/record.json").await?;
 ```
 
@@ -54,17 +47,13 @@ use macaw::core::*;
 use macaw::http::*;
 use macaw::ws::*;
 
-// Load recording from file
 let mut macaw = Macaw::replayer("./data/record.json")?;
 
-// Add proxies (no upstream URL needed in replay mode)
 macaw.add_http_proxy("http_demo", "127.0.0.1:8800").await?;
 macaw.add_ws_proxy("ws_demo", "127.0.0.1:8801").await?;
 
-// Start replaying
 macaw.play()?;
 
-// Wait until replay completes
 macaw.wait_until_stopped().await?;
 ```
 
@@ -164,14 +153,6 @@ In recording mode, proxies:
 2. Forward requests/responses to upstream servers
 3. Send `RecordedEvent` messages to the `Recorder` actor via channels
 4. Record both downstream and upstream traffic
-
-Example (HTTP):
-```rust
-// When downstream sends a request
-self.recorder.send(RecordedEvent::new(self.proxy_id, request.clone()))?;
-let response = self.send_request(request).await?; // Forward to upstream
-self.recorder.send(RecordedEvent::new(self.proxy_id, response.clone()))?;
-```
 
 #### Replay Mode
 
