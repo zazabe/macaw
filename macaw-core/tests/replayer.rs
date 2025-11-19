@@ -6,7 +6,7 @@ use tracing::error;
 
 #[tokio::test]
 async fn test_replayer_multiple_proxies() {
-    let recording_path = test_path!().join("./data/recordings.json");
+    let recording_path = test_path!().join("./data/replayer-test_replayer_multiple_proxies.json");
     let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
 
     let (tx1, rx1) = actor_channel::<TestProxyActor>();

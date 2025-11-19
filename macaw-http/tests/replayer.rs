@@ -4,7 +4,8 @@ use macaw_http::prelude::*;
 
 #[tokio::test]
 async fn test_replayer_multiple_http_proxies() {
-    let recording_path = test_path!().join("./data/recordings.json");
+    let recording_path =
+        test_path!().join("./data/replayer-test_replayer_multiple_http_proxies.json");
     let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
 
     let proxy1_addr = macaw

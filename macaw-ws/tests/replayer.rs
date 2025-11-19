@@ -8,7 +8,7 @@ use common::WsTestClient;
 
 #[tokio::test]
 async fn test_replayer_multiple_ws_proxies() -> Result<(), anyhow::Error> {
-    let recording_path = test_path!().join("data/recordings.json");
+    let recording_path = test_path!().join("data/replayer-test_replayer_multiple_ws_proxies.json");
 
     let mut macaw = Macaw::<Replayer>::replayer(recording_path)?;
     let proxy1_addr = macaw.add_ws_proxy("ws_proxy1", "127.0.0.1:0").await?;
