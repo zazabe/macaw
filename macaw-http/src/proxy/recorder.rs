@@ -8,6 +8,7 @@ pub(crate) struct HttpProxyRecorderActor {
     recorder: ActorHandle<Recorder>,
     upstream: HttpClient,
     downstream: HttpServer,
+    options: HttpProxyOptions,
 }
 
 impl Actor for HttpProxyRecorderActor {
@@ -30,6 +31,7 @@ impl HttpProxyRecorderActor {
         target_url: TargetUrl,
         recorder: ActorHandle<Recorder>,
         sender: Box<dyn HttpServerRequestResolver>,
+        options: HttpProxyOptions,
     ) -> Result<Self, anyhow::Error> {
         let upstream = HttpClient::new()?;
         let downstream = HttpServer::new(addr, sender);
@@ -41,6 +43,7 @@ impl HttpProxyRecorderActor {
             recorder,
             upstream,
             downstream,
+            options,
         })
     }
 
@@ -68,12 +71,23 @@ impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
         &mut self,
         request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
+        let decoded_request = self.options.transform.decode_request(request.clone())?;
+        let redacted_request = self
+            .options
+            .redact
+            .http_redact_request(decoded_request.clone());
+        let encoded_request = self
+            .options
+            .transform
+            .encode_request(decoded_request.clone())?;
         self.recorder
-            .send(RecordedEvent::new(self.proxy_id, request.clone()))?;
-        let response = self.send_request(request).await?;
+            .send(RecordedEvent::new(self.proxy_id, redacted_request))?;
+        let response = self.send_request(encoded_request).await?;
+        let decoded_response = self.options.transform.decode_response(response)?;
         self.recorder
-            .send(RecordedEvent::new(self.proxy_id, response.clone()))?;
-        Ok(response)
+            .send(RecordedEvent::new(self.proxy_id, decoded_response.clone()))?;
+        let encoded_response = self.options.transform.encode_response(decoded_response)?;
+        Ok(encoded_response)
     }
 }
 
@@ -95,6 +109,7 @@ pub trait MacawHttpRecorderSetup {
         proxy_id: &str,
         addr: &str,
         target_url: &str,
+        options: HttpProxyOptions,
     ) -> impl Future<Output = Result<SocketAddr, anyhow::Error>>;
 }
 
@@ -104,6 +119,7 @@ impl MacawHttpRecorderSetup for Macaw<Recorder> {
         proxy_id: &str,
         addr: &str,
         target_url: &str,
+        options: HttpProxyOptions,
     ) -> Result<SocketAddr, anyhow::Error> {
         let (_proxy_id, handle) = self.add_proxy(move |recorder, actor_context| {
             let proxy_id: ProxyId = proxy_id.parse()?;
@@ -119,6 +135,7 @@ impl MacawHttpRecorderSetup for Macaw<Recorder> {
                 target_url,
                 recorder.clone(),
                 sender,
+                options,
             )?;
             Ok((proxy_id, actor.run_with_channel(tx, rx)))
         })?;

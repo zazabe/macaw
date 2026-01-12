@@ -1,3 +1,3 @@
 mod event;
 
-pub(crate) use event::*;
+pub use event::*;

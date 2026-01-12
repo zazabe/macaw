@@ -40,7 +40,7 @@ impl WsDownstreamEvent {
 // ------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum WsEvent {
+pub enum WsEvent {
     Message(WsMessageEvent),
     Open(WsOpenEvent),
     Disconnect,
@@ -58,17 +58,17 @@ impl HasFingerprint for WsEvent {
 }
 
 impl WsEvent {
-    pub(crate) fn open(request: HttpRequest) -> Self {
+    pub fn open(request: HttpRequest) -> Self {
         Self::Open(WsOpenEvent { request })
     }
 
-    pub(crate) fn message(message: WsMessage) -> Self {
+    pub fn message(message: WsMessage) -> Self {
         Self::Message(WsMessageEvent { message })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-pub(crate) enum WsMessage {
+pub enum WsMessage {
     Text(String),
     Binary(Bytes),
     Ping(Bytes),
@@ -115,13 +115,13 @@ impl TryFrom<tungstenite::Message> for WsMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-pub(crate) struct WsMessageEvent {
-    pub(crate) message: WsMessage,
+pub struct WsMessageEvent {
+    pub message: WsMessage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsOpenEvent {
-    pub(crate) request: HttpRequest,
+pub struct WsOpenEvent {
+    pub request: HttpRequest,
 }
 
 impl HasFingerprint for WsOpenEvent {

@@ -1,89 +1,218 @@
 use futures::{SinkExt, StreamExt};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, time::Duration};
+use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-
 // ------------------------------------------------------------
 
 /// Unique identifier for a WebSocket connection.
 pub type ConnectionId = usize;
 
-/// Handle to an echo server that allows waiting for all connections to close.
-#[allow(unused)]
-pub struct EchoServerHandle {
-    connections: Arc<Mutex<HashMap<ConnectionId, mpsc::UnboundedSender<Message>>>>,
-    next_conn_id: Arc<AtomicUsize>,
+/// Stores both the sender and received messages channel for a connection to keep them in sync.
+struct Connection {
+    client_tx: mpsc::UnboundedSender<Message>,
 }
 
-impl EchoServerHandle {
-    /// Waits until the connection count reaches the given value.
-    #[allow(unused)]
-    pub async fn wait_conn_count(&self, count: usize) {
-        // Poll until connection count reaches the given value
-        while self.connections.lock().await.len() != count {
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+/// Manages WebSocket connections with their senders and received messages.
+#[derive(Clone)]
+struct Connections {
+    inner: Arc<SharedConnections>,
+}
+
+impl Connections {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(SharedConnections::new()),
         }
     }
 
-    /// Broadcasts a message to all active connections.
-    #[allow(unused)]
-    pub async fn broadcast(&self, message: &str) -> Result<usize, anyhow::Error> {
-        let connections = self.connections.lock().await;
+    /// Adds a new connection and returns its ID.
+    fn add_conn(
+        &self,
+        client_tx: mpsc::UnboundedSender<Message>,
+    ) -> Result<ConnectionId, anyhow::Error> {
+        let keys = self.inner.keys()?;
+        let conn_id = keys.into_iter().max().map(|id| id + 1).unwrap_or(0);
+        self.inner.insert(conn_id, Connection { client_tx })?;
+        Ok(conn_id)
+    }
+
+    /// Sends a message to a specific connection.
+    fn send_to(&self, conn_id: ConnectionId, message: &str) -> Result<(), anyhow::Error> {
+        self.inner.with_connection(&conn_id, |conn| {
+            conn.client_tx
+                .send(Message::text(message))
+                .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))
+        })??;
+        Ok(())
+    }
+
+    /// Broadcasts a message to all connections, removing failed ones.
+    fn broadcast(&self, message: &str) -> Result<usize, anyhow::Error> {
         let mut sent_count = 0;
         let mut failed_conns = Vec::new();
-        for (conn_id, sender) in connections.iter() {
-            if sender.send(Message::text(message)).is_err() {
-                failed_conns.push(*conn_id);
+        let conn_ids = self.inner.keys()?;
+        for conn_id in conn_ids {
+            if self.send_to(conn_id, message).is_err() {
+                failed_conns.push(conn_id);
             } else {
                 sent_count += 1;
             }
         }
-
-        // Clean up failed connections
-        if !failed_conns.is_empty() {
-            drop(connections);
-            let mut connections = self.connections.lock().await;
-            for conn_id in failed_conns {
-                connections.remove(&conn_id);
-            }
+        for conn_id in failed_conns {
+            self.inner.remove(&conn_id)?;
         }
-
         Ok(sent_count)
     }
 
-    /// Sends a message to a specific connection by ID.
-    #[allow(unused)]
-    pub async fn send_to(&self, conn_id: ConnectionId, message: &str) -> Result<(), anyhow::Error> {
-        let mut connections = self.connections.lock().await;
-        match connections.get(&conn_id) {
-            Some(sender) => {
-                if sender.send(Message::text(message)).is_err() {
-                    // Connection closed, remove it
-                    connections.remove(&conn_id);
-                    Err(anyhow::anyhow!("Connection {} closed", conn_id))
-                } else {
-                    Ok(())
-                }
-            }
-            None => Err(anyhow::anyhow!("Connection {} not found", conn_id)),
-        }
-    }
-
-    /// Returns a list of all active connection IDs.
-    #[allow(unused)]
-    pub async fn list_connections(&self) -> Vec<ConnectionId> {
-        let connections = self.connections.lock().await;
-        connections.keys().copied().collect()
+    /// Removes a connection.
+    fn remove(&self, conn_id: ConnectionId) -> Result<(), anyhow::Error> {
+        self.inner.remove(&conn_id)
     }
 }
 
-/// Starts a simple WebSocket echo server that echoes back received messages.
-/// Returns the address the server is listening on and a handle to wait for connections.
+#[derive(Debug)]
+pub enum WsServerEvent {
+    Message(WsServerMessage),
+    Connected(ConnectionId),
+    Disconnected(ConnectionId),
+}
+
+#[derive(Debug)]
+pub struct WsServerMessage {
+    pub conn_id: ConnectionId,
+    pub message: Message,
+}
+
+impl WsServerMessage {
+    pub fn as_str(&self) -> Result<&str, anyhow::Error> {
+        match &self.message {
+            Message::Text(text) => Ok(text.as_str()),
+            _ => Err(anyhow::anyhow!("Message is not a text message")),
+        }
+    }
+
+    pub fn is_close(&self) -> bool {
+        matches!(&self.message, Message::Close(_))
+    }
+}
+
+impl PartialEq<(ConnectionId, &str)> for WsServerMessage {
+    fn eq(&self, other: &(ConnectionId, &str)) -> bool {
+        match &self.message {
+            Message::Text(text) => self.conn_id == other.0 && text.as_str() == other.1,
+            _ => false,
+        }
+    }
+}
+
+/// Handle to a test server that allows waiting for server events and sending messages to connections.
+#[allow(unused)]
+pub struct TestServerHandle {
+    connections: Connections,
+    server_rx: mpsc::UnboundedReceiver<WsServerEvent>,
+}
+
+impl TestServerHandle {
+    /// Broadcasts a message to all active connections.
+    #[allow(unused)]
+    pub fn broadcast(&self, message: &str) -> Result<usize, anyhow::Error> {
+        self.connections.broadcast(message)
+    }
+
+    /// Sends a message to a specific connection by ID.
+    pub fn send_to(&self, conn_id: ConnectionId, message: &str) -> Result<(), anyhow::Error> {
+        self.connections.send_to(conn_id, message)
+    }
+
+    /// Waits for the next received text message event on the server.
+    /// Returns an error if the timeout is exceeded.
+    pub async fn recv_message(&mut self) -> Result<WsServerMessage, anyhow::Error> {
+        let event = self.recv(Duration::from_secs(2)).await?;
+        match event {
+            WsServerEvent::Message(message) => Ok(message),
+            _ => Err(anyhow::anyhow!(
+                "Expected text message event, got {:?}",
+                event
+            )),
+        }
+    }
+
+    /// Waits for a connection to be disconnected, either by a close message or a disconnect event.
+    pub async fn assert_disconnected(
+        &mut self,
+        expected_conn_id: ConnectionId,
+    ) -> Result<(), anyhow::Error> {
+        let event = self.recv(Duration::from_secs(2)).await?;
+        match event {
+            WsServerEvent::Disconnected(conn_id) => {
+                if conn_id == expected_conn_id {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Expected disconnect event for connection {:?}, got connection {:?}",
+                        expected_conn_id,
+                        conn_id
+                    ))
+                }
+            }
+            WsServerEvent::Message(message) => {
+                if message.is_close() && message.conn_id == expected_conn_id {
+                    let event = self.recv(Duration::from_secs(2)).await?;
+                    match event {
+                        WsServerEvent::Disconnected(conn_id) => {
+                            if conn_id == expected_conn_id {
+                                Ok(())
+                            } else {
+                                Err(anyhow::anyhow!(
+                                    "Expected disconnect event after close message for connection {:?}, got connection {:?}",
+                                    expected_conn_id,
+                                    conn_id
+                                ))
+                            }
+                        }
+                        _ => Err(anyhow::anyhow!("Expected disconnect after close event")),
+                    }
+                } else {
+                    Err(anyhow::anyhow!("Expected close event"))
+                }
+            }
+            _ => Err(anyhow::anyhow!(
+                "Expected disconnect or close event, got {:?}",
+                event
+            )),
+        }
+    }
+
+    /// Waits for the next connection event on the server.
+    /// Returns an error if the timeout is exceeded.
+    pub async fn recv_connect(&mut self) -> Result<ConnectionId, anyhow::Error> {
+        let event = self.recv(Duration::from_secs(2)).await?;
+        match event {
+            WsServerEvent::Connected(conn_id) => Ok(conn_id),
+            _ => Err(anyhow::anyhow!("Expected connected event, got {:?}", event)),
+        }
+    }
+
+    /// Waits for the next received message event on the server.
+    /// Returns an error if the timeout is exceeded.
+    pub async fn recv(&mut self, timeout: Duration) -> Result<WsServerEvent, anyhow::Error> {
+        tokio::select! {
+            result = self.server_rx.recv() => {
+                result.ok_or_else(|| anyhow::anyhow!("Server channel closed"))
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(anyhow::anyhow!("Timeout waiting for event after {:?}", timeout))
+            }
+        }
+    }
+}
+
+/// Starts a simple WebSocket test server that tracks received messages.
+/// Returns the address the server is listening on and a handle to wait for connections and check received messages.
 /// The server runs in the background and handles multiple connections.
 #[allow(unused)]
-pub async fn start_echo_server() -> Result<(std::net::SocketAddr, EchoServerHandle), anyhow::Error>
+pub async fn start_test_server() -> Result<(std::net::SocketAddr, TestServerHandle), anyhow::Error>
 {
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
@@ -95,99 +224,84 @@ pub async fn start_echo_server() -> Result<(std::net::SocketAddr, EchoServerHand
         .local_addr()
         .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?;
 
-    let connections = Arc::new(Mutex::new(HashMap::<
-        ConnectionId,
-        mpsc::UnboundedSender<Message>,
-    >::new()));
-    let next_conn_id = Arc::new(AtomicUsize::new(0));
+    let connections = Connections::new();
     let (ready_tx, ready_rx) = oneshot::channel();
-
-    let connections_clone = connections.clone();
-    let next_conn_id_clone = next_conn_id.clone();
+    let (server_tx, server_rx) = mpsc::unbounded_channel::<WsServerEvent>();
 
     // Spawn the server to handle connections in the background
-    tokio::spawn(async move {
-        // Signal that the server is ready
-        let _ = ready_tx.send(());
-
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let ws_stream = match accept_async(stream).await {
-                        Ok(ws) => ws,
-                        Err(e) => {
-                            eprintln!("Failed to accept websocket connection: {}", e);
-                            continue;
-                        }
-                    };
-                    let (mut write, mut read) = ws_stream.split();
-
-                    // Assign a unique connection ID
-                    let conn_id = next_conn_id_clone.fetch_add(1, Ordering::SeqCst);
-
-                    // Create a channel for sending messages to this connection
-                    let (send_tx, mut send_rx) = mpsc::unbounded_channel::<Message>();
-
-                    // Register the connection
-                    {
-                        let mut conns = connections_clone.lock().await;
-                        conns.insert(conn_id, send_tx);
-                    }
-
-                    let connections_clone = connections_clone.clone();
-
-                    // Handle each connection in a separate task
-                    tokio::spawn(async move {
-                        loop {
-                            tokio::select! {
-                                // Handle incoming messages from websocket
-                                msg_opt = read.next() => {
-                                    match msg_opt {
-                                        Some(Ok(Message::Text(text))) => {
-                                            if write
-                                                .send(Message::Text(format!("echo: {}", text).into()))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        Some(Ok(Message::Binary(data))) => {
-                                            if write.send(Message::Binary(data)).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        Some(Ok(Message::Close(_))) => {
-                                            break;
-                                        }
-                                        Some(Err(_)) => break,
-                                        None => break,
-                                        _ => {}
-                                    }
-                                }
-                                // Handle outgoing messages from channel
-                                msg_opt = send_rx.recv() => {
-                                    match msg_opt {
-                                        Some(msg) => {
-                                            if write.send(msg).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        None => break,
-                                    }
-                                }
+    tokio::spawn({
+        let connections = connections.clone();
+        async move {
+            // Signal that the server is ready
+            let _ = ready_tx.send(());
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => {
+                        let ws_stream = match accept_async(stream).await {
+                            Ok(ws) => ws,
+                            Err(e) => {
+                                panic!("Failed to accept websocket connection: {}", e);
                             }
-                        }
-                        // Unregister the connection
-                        {
-                            let mut conns = connections_clone.lock().await;
-                            conns.remove(&conn_id);
-                        }
-                    });
-                }
-                Err(e) => {
-                    eprintln!("Failed to accept connection: {}", e);
-                    break;
+                        };
+                        let (mut write, mut read) = ws_stream.split();
+
+                        // Create a channel for sending messages to this connection
+                        let (send_tx, mut send_rx) = mpsc::unbounded_channel::<Message>();
+
+                        // Handle each connection in a separate task
+                        tokio::spawn({
+                            let server_tx = server_tx.clone();
+                            let conns = connections.clone();
+                            async move {
+                                let conn_id = conns.add_conn(send_tx).unwrap_or_else(|e| {
+                                    panic!("Failed to add connection, error: {}", e)
+                                });
+                                server_tx.send(WsServerEvent::Connected(conn_id)).unwrap();
+
+                                loop {
+                                    tokio::select! {
+                                        // Handle incoming messages from websocket
+                                        msg_opt = read.next() => {
+                                            match msg_opt {
+                                                Some(Ok(message)) => {
+                                                    let is_close_message = message.is_close();
+                                                    if server_tx.send(WsServerEvent::Message(WsServerMessage { conn_id, message })).is_err() {
+                                                        break;
+                                                    }
+                                                    if is_close_message {
+                                                        break;
+                                                    }
+                                                }
+                                                Some(Err(_)) => break,
+                                                None => break,
+                                            }
+                                        }
+                                        // Handle outgoing messages from channel
+                                        msg_opt = send_rx.recv() => {
+                                            match msg_opt {
+                                                Some(msg) => {
+                                                    if write.send(msg).await.is_err() {
+                                                        break;
+                                                    }
+                                                }
+                                                None => break,
+                                            }
+                                        }
+                                    }
+                                }
+                                // Unregister the connection
+                                conns.remove(conn_id).unwrap_or_else(|e| {
+                                    panic!("Failed to remove connection, error: {}", e)
+                                });
+                                server_tx
+                                    .send(WsServerEvent::Disconnected(conn_id))
+                                    .unwrap();
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        panic!("Failed to accept connection: {}", e);
+                    }
                 }
             }
         }
@@ -200,9 +314,9 @@ pub async fn start_echo_server() -> Result<(std::net::SocketAddr, EchoServerHand
 
     Ok((
         addr,
-        EchoServerHandle {
+        TestServerHandle {
             connections,
-            next_conn_id,
+            server_rx,
         },
     ))
 }
@@ -224,38 +338,54 @@ impl WsTestClient {
 
         let (send_tx, mut send_rx) = mpsc::unbounded_channel::<Message>();
         let (recv_tx, recv_rx) = mpsc::unbounded_channel::<String>();
+        let barrier = Arc::new(tokio::sync::Barrier::new(4));
 
         // Spawn task to forward messages from channel to websocket
-        let write_handle = tokio::spawn(async move {
-            while let Some(msg) = send_rx.recv().await {
-                if write.send(msg).await.is_err() {
-                    break;
+        let write_handle = tokio::spawn({
+            let barrier = barrier.clone();
+            async move {
+                barrier.wait().await;
+                while let Some(msg) = send_rx.recv().await {
+                    if write.send(msg).await.is_err() {
+                        break;
+                    }
                 }
             }
         });
 
         // Spawn task to forward messages from websocket to channel
-        let read_handle = tokio::spawn(async move {
-            while let Some(msg) = read.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        if recv_tx.send(text.as_str().to_string()).is_err() {
-                            break;
+        let read_handle = tokio::spawn({
+            let barrier = barrier.clone();
+            async move {
+                barrier.wait().await;
+                while let Some(msg) = read.next().await {
+                    match msg {
+                        Ok(Message::Text(text)) => {
+                            let text = text.as_str().to_string();
+                            if recv_tx.send(text).is_err() {
+                                break;
+                            }
                         }
+                        Ok(Message::Close(_)) => break,
+                        Err(_) => break,
+                        _ => {}
                     }
-                    Ok(Message::Close(_)) => break,
-                    Err(_) => break,
-                    _ => {}
                 }
             }
         });
 
-        let _handle = tokio::spawn(async move {
-            tokio::select! {
-                _ = write_handle => {}
-                _ = read_handle => {}
+        let _handle = tokio::spawn({
+            let barrier = barrier.clone();
+            async move {
+                barrier.wait().await;
+                tokio::select! {
+                    _ = write_handle => {}
+                    _ = read_handle => {}
+                }
             }
         });
+
+        let _ = barrier.wait().await;
 
         Ok(Self {
             send_tx,
@@ -288,5 +418,60 @@ impl WsTestClient {
             .send(Message::Close(None))
             .map_err(|e| anyhow::anyhow!("Failed to close connection: {}", e))?;
         Ok(())
+    }
+}
+
+// ------------------------------------------------------------
+
+struct SharedConnections {
+    inner: Mutex<HashMap<ConnectionId, Connection>>,
+}
+
+impl SharedConnections {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn keys(&self) -> Result<Vec<ConnectionId>, anyhow::Error> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Failed to lock slot map: {}", e))?;
+        Ok(inner.keys().copied().collect())
+    }
+
+    fn insert(&self, key: ConnectionId, val: Connection) -> Result<(), anyhow::Error> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Failed to lock slot map: {}", e))?;
+        inner.insert(key, val);
+        Ok(())
+    }
+
+    fn remove(&self, key: &ConnectionId) -> Result<(), anyhow::Error> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Failed to lock slot map: {}", e))?;
+        inner.remove(key);
+        Ok(())
+    }
+
+    fn with_connection<F, R>(&self, key: &ConnectionId, f: F) -> Result<R, anyhow::Error>
+    where
+        F: FnOnce(&Connection) -> R,
+    {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Failed to lock slot map: {}", e))?;
+        let connection = inner
+            .get(key)
+            .ok_or_else(|| anyhow::anyhow!("Connection {:?} not found", key))?;
+        let r = f(connection);
+        Ok(r)
     }
 }

@@ -23,8 +23,8 @@ use macaw::ws::*;
 
 let mut macaw = Macaw::recorder();
 
-macaw.add_http_proxy("http_demo", "127.0.0.1:8800", "https://httpbin.org/").await?;
-macaw.add_ws_proxy("ws_demo", "127.0.0.1:8801", "wss://echo.websocket.org/").await?;
+macaw.add_http_proxy("http_demo", "127.0.0.1:8800", "https://httpbin.org/", HttpProxyOptions::default()).await?;
+macaw.add_ws_proxy("ws_demo", "127.0.0.1:8801", "wss://echo.websocket.org/", HttpProxyOptions::default()).await?;
 
 tokio::spawn({
     let handle = macaw.exit_handle();
@@ -49,8 +49,8 @@ use macaw::ws::*;
 
 let mut macaw = Macaw::replayer("./data/record.json")?;
 
-macaw.add_http_proxy("http_demo", "127.0.0.1:8800").await?;
-macaw.add_ws_proxy("ws_demo", "127.0.0.1:8801").await?;
+macaw.add_http_proxy("http_demo", "127.0.0.1:8800", HttpProxyOptions::default()).await?;
+macaw.add_ws_proxy("ws_demo", "127.0.0.1:8801", WsProxyOptions::default()).await?;
 
 macaw.play()?;
 
@@ -123,6 +123,14 @@ Protocol-specific crates (e.g., `macaw-http`, `macaw-ws`) implement:
 - **Protocol Logic**: Handle protocol-specific details (parsing, framing, etc.)
 - **Data Schema**: Define protocol-specific event types that implement `RecordEvent`
 - **Proxy Actors**: Implement `ProxyActor` trait and handle both recording and replay modes
+
+#### Redact/Transform
+
+Proxies supports two mechanisms for modifying requests and responses:
+
+- **Redact**: Removes or masks sensitive or nondeterministic data from requests before recording or matching during replay. This ensures that requests with varying signatures, timestamps, or other dynamic values can be properly matched. For example, redacting authentication headers allows replaying recordings even when credentials change.
+
+- **Transform**: Encodes/decodes requests and responses when they cross the proxy boundary (between downstream clients and upstream servers). This enables custom transformations like request signing, custom compression/decompression, or protocol translation. Transformations are applied bidirectionally: `decode_*` methods process incoming data, while `encode_*` methods process outgoing data.
 
 #### Recording Mode
 
