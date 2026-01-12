@@ -6,6 +6,7 @@ pub(crate) struct WsProxyReplayerActor {
     proxy_id: ProxyId,
     downstream: WsServer,
     events: WsPendingEvents,
+    options: WsProxyOptions,
 }
 
 impl WsProxyReplayerActor {
@@ -14,6 +15,7 @@ impl WsProxyReplayerActor {
         proxy_id: ProxyId,
         addr: SocketAddr,
         sender: ActorChannelSender<Self>,
+        options: WsProxyOptions,
     ) -> Result<Self, anyhow::Error> {
         let downstream_sender: Box<dyn ActorSender<WsDownstreamPeerEvent>> = Box::new(sender);
         let downstream = WsServer::new(addr, Box::new(downstream_sender));
@@ -23,6 +25,7 @@ impl WsProxyReplayerActor {
             proxy_id,
             downstream,
             events: WsPendingEvents::new(),
+            options,
         })
     }
 
@@ -35,7 +38,9 @@ impl WsProxyReplayerActor {
         peer_id: WsPeerId,
         event: WsEvent,
     ) -> Result<(), anyhow::Error> {
-        let replay_event = self.events.remove_replay(peer_id, &event);
+        let decoded_event = self.options.transform.decode_event(event)?;
+        let redacted_event = self.options.redact.ws_redact_event(decoded_event);
+        let replay_event = self.events.remove_replay(peer_id, &redacted_event);
         match replay_event {
             Some(event) => {
                 // replay event found, release the lock
@@ -43,7 +48,7 @@ impl WsProxyReplayerActor {
             }
             None => {
                 // Wait for the downstream event to be replayed
-                self.events.insert_downstream(peer_id, event);
+                self.events.insert_downstream(peer_id, redacted_event);
             }
         }
         Ok(())
@@ -84,7 +89,8 @@ impl WsProxyReplayerActor {
         // the replay can be released immediately
         replay_lock.release();
         let peer_id = record.peer_id;
-        match record.event {
+        let encoded_event = self.options.transform.encode_event(record.event)?;
+        match encoded_event {
             WsEvent::Message(message_event) => {
                 self.downstream.send(peer_id, message_event.message)?;
             }
@@ -233,6 +239,7 @@ pub trait MacawWsReplayerSetup {
         &mut self,
         proxy_id: &str,
         addr: &str,
+        options: WsProxyOptions,
     ) -> impl Future<Output = Result<SocketAddr, anyhow::Error>>;
 }
 
@@ -241,6 +248,7 @@ impl MacawWsReplayerSetup for Macaw<Replayer> {
         &mut self,
         proxy_id: &str,
         addr: &str,
+        options: WsProxyOptions,
     ) -> Result<SocketAddr, anyhow::Error> {
         let (_proxy_id, handle) = self
             .add_proxy(move |_replayer, actor_context| {
@@ -248,7 +256,8 @@ impl MacawWsReplayerSetup for Macaw<Replayer> {
                 let proxy_id: ProxyId = proxy_id.parse()?;
                 let context = actor_context.create_child(&proxy_id.to_string());
                 let addr: SocketAddr = addr.parse()?;
-                let actor = WsProxyReplayerActor::new(context, proxy_id, addr, tx.clone())?;
+                let actor =
+                    WsProxyReplayerActor::new(context, proxy_id, addr, tx.clone(), options)?;
                 Ok((proxy_id, actor.run_with_channel(tx, rx)))
             })
             .await?;

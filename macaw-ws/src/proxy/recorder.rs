@@ -9,6 +9,7 @@ pub(crate) struct WsProxyRecorderActor {
     peers: WsPeers,
     recorder: ActorHandle<Recorder>,
     upstream_sender: Box<dyn ActorSender<WsUpstreamPeerEvent>>,
+    options: WsProxyOptions,
 }
 
 impl Actor for WsProxyRecorderActor {
@@ -31,6 +32,7 @@ impl WsProxyRecorderActor {
         target_url: TargetUrl,
         recorder: ActorHandle<Recorder>,
         sender: ActorChannelSender<Self>,
+        options: WsProxyOptions,
     ) -> Result<Self, anyhow::Error> {
         let downstream_sender: Box<dyn ActorSender<WsDownstreamPeerEvent>> =
             Box::new(sender.clone());
@@ -45,6 +47,7 @@ impl WsProxyRecorderActor {
             peers,
             recorder,
             upstream_sender,
+            options,
         })
     }
 
@@ -79,10 +82,13 @@ impl WsProxyRecorderActor {
             "Received downstream event for peer {}: {:?}",
             peer_id, event
         );
-        self.send_downstream_record(peer_id, event.clone())?;
-        match event {
-            WsEvent::Message(event) => {
-                self.peers.get(peer_id)?.send(event.message)?;
+        let decoded_event = self.options.transform.decode_event(event)?;
+        let redacted_event = self.options.redact.ws_redact_event(decoded_event.clone());
+        self.send_downstream_record(peer_id, redacted_event)?;
+        let encoded_event = self.options.transform.encode_event(decoded_event)?;
+        match encoded_event {
+            WsEvent::Message(message_event) => {
+                self.peers.get(peer_id)?.send(message_event.message)?;
             }
             WsEvent::Open(event) => {
                 let request = event.request.update(&self.target_url);
@@ -112,11 +118,18 @@ impl WsProxyRecorderActor {
         event: WsEvent,
     ) -> Result<(), anyhow::Error> {
         debug!("Received upstream event for peer {}", peer_id);
-        match &event {
+
+        match event {
             WsEvent::Message(message_event) => {
-                self.send_upstream_record(peer_id, event.clone())?;
-                self.downstream
-                    .send(peer_id, message_event.message.clone())?;
+                let decoded_event = self
+                    .options
+                    .transform
+                    .decode_event(WsEvent::Message(message_event))?;
+                self.send_upstream_record(peer_id, decoded_event.clone())?;
+                let encoded_event = self.options.transform.encode_event(decoded_event)?;
+                if let WsEvent::Message(message_event) = encoded_event {
+                    self.downstream.send(peer_id, message_event.message)?;
+                }
             }
             WsEvent::Open(..) => {
                 // Upstream peer open received
@@ -125,6 +138,7 @@ impl WsProxyRecorderActor {
                 self.downstream.disconnect(peer_id)?;
             }
         }
+
         Ok(())
     }
 }
@@ -168,6 +182,7 @@ pub trait MacawWsRecorderSetup {
         proxy_id: &str,
         addr: &str,
         target_url: &str,
+        options: WsProxyOptions,
     ) -> impl Future<Output = Result<SocketAddr, anyhow::Error>>;
 }
 
@@ -177,6 +192,7 @@ impl MacawWsRecorderSetup for Macaw<Recorder> {
         proxy_id: &str,
         addr: &str,
         target_url: &str,
+        options: WsProxyOptions,
     ) -> Result<SocketAddr, anyhow::Error> {
         let (_proxy_id, handle) = self.add_proxy(move |recorder, actor_context| {
             let proxy_id: ProxyId = proxy_id.parse()?;
@@ -191,6 +207,7 @@ impl MacawWsRecorderSetup for Macaw<Recorder> {
                 target_url,
                 recorder.clone(),
                 tx.clone(),
+                options,
             )?;
             Ok((proxy_id, actor.run_with_channel(tx, rx)))
         })?;

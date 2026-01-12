@@ -40,3 +40,4 @@ insta.workspace = true
 serde_json.workspace = true
 httpmock.workspace = true
 reqwest.workspace = true
+regex.workspace = true

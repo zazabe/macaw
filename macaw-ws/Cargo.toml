@@ -31,3 +31,4 @@ ahash.workspace = true
 tempfile.workspace = true
 insta.workspace = true
 serde_json.workspace = true
+base64.workspace = true

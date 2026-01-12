@@ -1,3 +1,4 @@
+#[allow(unused)]
 mod common;
 
 use macaw_core::prelude::*;
@@ -5,14 +6,20 @@ use macaw_core::test_path;
 use macaw_ws::prelude::*;
 
 use common::WsTestClient;
+mod helpers;
+use helpers::*;
 
 #[tokio::test]
 async fn test_replayer_multiple_ws_proxies() -> Result<(), anyhow::Error> {
     let recording_path = test_path!().join("data/replayer-test_replayer_multiple_ws_proxies.json");
 
     let mut macaw = Macaw::<Replayer>::replayer(recording_path)?;
-    let proxy1_addr = macaw.add_ws_proxy("ws_proxy1", "127.0.0.1:0").await?;
-    let proxy2_addr = macaw.add_ws_proxy("ws_proxy2", "127.0.0.1:0").await?;
+    let proxy1_addr = macaw
+        .add_ws_proxy("ws_proxy1", "127.0.0.1:0", WsProxyOptions::default())
+        .await?;
+    let proxy2_addr = macaw
+        .add_ws_proxy("ws_proxy2", "127.0.0.1:0", WsProxyOptions::default())
+        .await?;
 
     macaw.play()?;
 
@@ -37,7 +44,9 @@ async fn test_replayer_multiple_ws_conns() -> Result<(), anyhow::Error> {
     let recording_path = test_path!().join("data/replayer-test_replayer_multiple_ws_conns.json");
 
     let mut macaw = Macaw::<Replayer>::replayer(recording_path)?;
-    let proxy_addr = macaw.add_ws_proxy("ws_proxy1", "127.0.0.1:0").await?;
+    let proxy_addr = macaw
+        .add_ws_proxy("ws_proxy1", "127.0.0.1:0", WsProxyOptions::default())
+        .await?;
 
     macaw.play()?;
 
@@ -60,5 +69,36 @@ async fn test_replayer_multiple_ws_conns() -> Result<(), anyhow::Error> {
 
     client1.close().await?;
     client2.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_replayer_ws_transform() -> Result<(), anyhow::Error> {
+    let recording_path = test_path!().join("data/replayer-test_replayer_ws_transform.json");
+    let mut macaw = Macaw::<Replayer>::replayer(recording_path)?;
+
+    let options = WsProxyOptions {
+        redact: Box::new(TestWsRedact),
+        transform: Box::new(TestWsTransform),
+    };
+    let proxy_addr = macaw
+        .add_ws_proxy("ws_proxy", "127.0.0.1:0", options)
+        .await?;
+
+    macaw.play()?;
+
+    // Connect to proxy and send a transformed message - this should match a recorded request
+    let proxy_url = format!("ws://{}/", proxy_addr);
+    let mut client = WsTestClient::connect(&proxy_url).await?;
+
+    // Send a message with transform encoding - the transform will encode it in base64,
+    // but the recorded event has "request1", so after decode it should match
+    client.send(&encode_text("request1")).await?;
+
+    // Receive response - the recorded event has "response1", but transform will encode it in base64,
+    let response = client.recv().await?;
+    assert_eq!(response, encode_text("response1"));
+
+    client.close().await?;
     Ok(())
 }

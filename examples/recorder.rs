@@ -10,10 +10,20 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let mut macaw = Macaw::recorder();
     macaw
-        .add_http_proxy("http_demo", "127.0.0.1:8800", "https://httpbin.org/")
+        .add_http_proxy(
+            "http_demo",
+            "127.0.0.1:8800",
+            "https://httpbin.org/",
+            HttpProxyOptions::default(),
+        )
         .await?;
     macaw
-        .add_ws_proxy("ws_demo", "127.0.0.1:8801", "wss://echo.websocket.org/")
+        .add_ws_proxy(
+            "ws_demo",
+            "127.0.0.1:8801",
+            "wss://echo.websocket.org/",
+            WsProxyOptions::default(),
+        )
         .await?;
 
     tokio::spawn({

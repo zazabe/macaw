@@ -115,6 +115,24 @@ impl dyn Content {
             }
         }
     }
+
+    pub fn downcast<T: Content + 'static>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
+        if (*self).as_any().is::<T>() {
+            // It is sound to convert; the trait object is actually T
+            Ok(self.downcast_unchecked())
+        } else {
+            Err(self)
+        }
+    }
+
+    // Helper for unchecked downcast (only call if is::<T>() successful)
+    fn downcast_unchecked<T: Content + 'static>(self: Box<Self>) -> Box<T> {
+        unsafe { Box::from_raw(Box::into_raw(self) as *mut T) }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +141,10 @@ pub struct PlainText(String);
 impl PlainText {
     pub fn new(data: String) -> Self {
         Self(data)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -139,6 +161,10 @@ pub struct Base64(String);
 impl Base64 {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         Self(BASE64_STANDARD.encode(bytes))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

@@ -25,20 +25,20 @@ impl HttpEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct HttpRequestEvent {
-    pub(crate) request_id: Uuid,
+pub struct HttpRequestEvent {
+    pub request_id: Uuid,
     #[serde(with = "http_method_serde")]
-    pub(crate) method: http::Method,
+    pub method: http::Method,
     #[serde(with = "http_uri_serde")]
-    pub(crate) uri: http::Uri,
+    pub uri: http::Uri,
     #[serde(with = "http_version_serde")]
-    pub(crate) version: http::Version,
-    pub(crate) headers: BTreeMap<String, String>,
-    pub(crate) body: Box<dyn Content>,
+    pub version: http::Version,
+    pub headers: BTreeMap<String, String>,
+    pub body: Box<dyn Content>,
 }
 
 impl HttpRequestEvent {
-    pub(crate) fn from_request(req: &HttpRequest) -> Result<Self, anyhow::Error> {
+    pub fn from_request(req: &HttpRequest) -> Result<Self, anyhow::Error> {
         Ok(Self {
             request_id: Uuid::new_v4(),
             method: req.method().clone(),
@@ -53,7 +53,7 @@ impl HttpRequestEvent {
         })
     }
 
-    pub(crate) fn to_request(&self) -> Result<HttpRequest, anyhow::Error> {
+    pub fn to_request(&self) -> Result<HttpRequest, anyhow::Error> {
         let mut builder = http::Request::builder()
             .method(self.method.clone())
             .uri(self.uri.clone())
@@ -80,21 +80,18 @@ impl HttpRequestEvent {
 impl RecordEvent for HttpRequestEvent {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct HttpResponseEvent {
-    pub(crate) request_id: Uuid,
+pub struct HttpResponseEvent {
+    pub request_id: Uuid,
     #[serde(with = "http_status_serde")]
-    pub(crate) status: http::StatusCode,
+    pub status: http::StatusCode,
     #[serde(with = "http_version_serde")]
-    pub(crate) version: http::Version,
-    pub(crate) headers: BTreeMap<String, String>,
-    pub(crate) body: Box<dyn Content>,
+    pub version: http::Version,
+    pub headers: BTreeMap<String, String>,
+    pub body: Box<dyn Content>,
 }
 
 impl HttpResponseEvent {
-    pub(crate) fn from_response(
-        res: &HttpResponse,
-        request_id: Uuid,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn from_response(res: &HttpResponse, request_id: Uuid) -> Result<Self, anyhow::Error> {
         Ok(Self {
             request_id,
             status: res.status(),
@@ -108,7 +105,7 @@ impl HttpResponseEvent {
         })
     }
 
-    pub(crate) fn to_response(&self) -> Result<HttpResponse, anyhow::Error> {
+    pub fn to_response(&self) -> Result<HttpResponse, anyhow::Error> {
         let mut builder = http::Response::builder()
             .status(self.status)
             .version(self.version);

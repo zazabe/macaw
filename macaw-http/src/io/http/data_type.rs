@@ -7,18 +7,18 @@ use std::{
 use bytes::Bytes;
 use hyper::body::{Frame, SizeHint};
 
-pub(crate) type HttpRequest = http::Request<BodyBytes>;
-pub(crate) type HttpResponse = http::Response<BodyBytes>;
+pub type HttpRequest = http::Request<BodyBytes>;
+pub type HttpResponse = http::Response<BodyBytes>;
 
 #[derive(Debug, Clone)]
-pub(crate) struct BodyBytes(Bytes);
+pub struct BodyBytes(Bytes);
 
 impl BodyBytes {
-    pub(crate) fn new(bytes: Bytes) -> Self {
+    pub fn new(bytes: Bytes) -> Self {
         Self(bytes)
     }
 
-    pub(crate) fn to_bytes(&self) -> &Bytes {
+    pub fn to_bytes(&self) -> &Bytes {
         &self.0
     }
 }
