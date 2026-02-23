@@ -536,6 +536,7 @@ async fn test_recorder_ws_transform() -> Result<(), anyhow::Error> {
     let options = WsProxyOptions {
         redact: Box::new(TestWsRedact),
         transform: Box::new(TestWsTransform),
+        overrides: Default::default(),
     };
     let proxy_addr = macaw
         .add_ws_proxy("ws_proxy", "127.0.0.1:0", &server_url, options)

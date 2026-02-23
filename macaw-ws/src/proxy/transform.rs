@@ -1,4 +1,108 @@
+use std::io::BufReader;
+
+use itertools::Either;
+
 use crate::lib::*;
+
+#[derive(Deserialize, Debug)]
+#[serde(from = "WsOverrideRulesRaw")]
+pub struct WsOverrideRules {
+    upstream: OverrideRulesChain<WsMessageRule>,
+    downstream: OverrideRulesChain<WsMessageRule>,
+}
+
+impl WsOverrideRules {
+    pub fn from_file(path: &Path) -> Result<Self, anyhow::Error> {
+        let file = fs_err::File::open(path)?;
+        let reader = BufReader::new(file);
+        let rules: WsOverrideRules = serde_json::from_reader(reader)?;
+        Ok(rules)
+    }
+}
+
+impl WsOverride for WsOverrideRules {
+    fn ws_upstream_override_event(&self, event: WsEvent) -> Option<WsEvent> {
+        match event {
+            WsEvent::Message(WsMessageEvent { message }) => {
+                match self.upstream.apply_rules(message, ()) {
+                    OverrideOutput::Suppress => None,
+                    OverrideOutput::Message(message) => {
+                        Some(WsEvent::Message(WsMessageEvent { message }))
+                    }
+                }
+            }
+            event => Some(event),
+        }
+    }
+
+    fn ws_downstream_override_event(&self, event: WsEvent) -> Option<WsEvent> {
+        match event {
+            WsEvent::Message(WsMessageEvent { message }) => {
+                match self.downstream.apply_rules(message, ()) {
+                    OverrideOutput::Suppress => None,
+                    OverrideOutput::Message(message) => {
+                        Some(WsEvent::Message(WsMessageEvent { message }))
+                    }
+                }
+            }
+            event => Some(event),
+        }
+    }
+}
+
+impl From<WsOverrideRulesRaw> for WsOverrideRules {
+    fn from(raw: WsOverrideRulesRaw) -> Self {
+        let (upstream, downstream): (Vec<WsMessageRule>, Vec<WsMessageRule>) =
+            raw.0.into_iter().partition_map(|rule| match rule {
+                WsOverrideRuleRaw::WsUpstreamMessage(rule) => Either::Left(rule),
+                WsOverrideRuleRaw::WsDownstreamMessage(rule) => Either::Right(rule),
+            });
+        Self {
+            upstream: OverrideRulesChain::from_iter(upstream),
+            downstream: OverrideRulesChain::from_iter(downstream),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct WsOverrideRulesRaw(Vec<WsOverrideRuleRaw>);
+
+#[derive(Deserialize)]
+enum WsOverrideRuleRaw {
+    WsUpstreamMessage(WsMessageRule),
+    WsDownstreamMessage(WsMessageRule),
+}
+
+pub trait WsOverride: Send + Sync {
+    fn ws_upstream_override_event(&self, event: WsEvent) -> Option<WsEvent>;
+
+    fn ws_downstream_override_event(&self, event: WsEvent) -> Option<WsEvent>;
+}
+
+impl fmt::Debug for Box<dyn WsOverride> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "WsOverride")?;
+        Ok(())
+    }
+}
+
+pub struct NoopWsOverride;
+
+impl WsOverride for NoopWsOverride {
+    fn ws_upstream_override_event(&self, event: WsEvent) -> Option<WsEvent> {
+        Some(event)
+    }
+
+    fn ws_downstream_override_event(&self, event: WsEvent) -> Option<WsEvent> {
+        Some(event)
+    }
+}
+
+impl Default for Box<dyn WsOverride> {
+    fn default() -> Self {
+        Box::new(NoopWsOverride)
+    }
+}
 
 /// Redact WebSocket events before they are recorded or compared to recorded events.
 /// Use case: redact nondeterministic parts, remove sensitive data, etc...

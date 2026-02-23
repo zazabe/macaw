@@ -47,6 +47,7 @@ async fn test_replayer_http_transform() {
     let options = HttpProxyOptions {
         redact: Box::new(TestHttpRedact),
         transform: Box::new(TestHttpTransform),
+        overrides: Default::default(),
     };
     let proxy_addr = macaw
         .add_http_proxy("http_proxy", "127.0.0.1:0", options)

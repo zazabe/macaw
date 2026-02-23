@@ -38,17 +38,23 @@ impl WsProxyReplayerActor {
         peer_id: WsPeerId,
         event: WsEvent,
     ) -> Result<(), anyhow::Error> {
-        let decoded_event = self.options.transform.decode_event(event)?;
-        let redacted_event = self.options.redact.ws_redact_event(decoded_event);
-        let replay_event = self.events.remove_replay(peer_id, &redacted_event);
-        match replay_event {
-            Some(event) => {
-                // replay event found, release the lock
-                event.lock.release();
-            }
-            None => {
-                // Wait for the downstream event to be replayed
-                self.events.insert_downstream(peer_id, redacted_event);
+        let event_decoded = self.options.transform.decode_event(event)?;
+        let event_overridden = self
+            .options
+            .overrides
+            .ws_downstream_override_event(event_decoded);
+        if let Some(event_overridden) = event_overridden {
+            let event_redacted = self.options.redact.ws_redact_event(event_overridden);
+            let event_replay = self.events.remove_replay(peer_id, &event_redacted);
+            match event_replay {
+                Some(event_replay) => {
+                    // replay event found, release the lock
+                    event_replay.lock.release();
+                }
+                None => {
+                    // Wait for the downstream event to be replayed
+                    self.events.insert_downstream(peer_id, event_redacted);
+                }
             }
         }
         Ok(())

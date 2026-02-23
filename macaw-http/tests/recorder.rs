@@ -94,9 +94,7 @@ async fn test_recorder_multiple_http_proxies() {
               "accept": "*/*",
               "host": "[host]"
             },
-            "body": {
-              "Empty": null
-            }
+            "body": null
           }
         },
         {
@@ -110,9 +108,7 @@ async fn test_recorder_multiple_http_proxies() {
               "content-length": "9",
               "date": "[date]"
             },
-            "body": {
-              "PlainText": "response1"
-            }
+            "body": "response1"
           }
         },
         {
@@ -127,9 +123,7 @@ async fn test_recorder_multiple_http_proxies() {
               "accept": "*/*",
               "host": "[host]"
             },
-            "body": {
-              "Empty": null
-            }
+            "body": null
           }
         },
         {
@@ -143,9 +137,7 @@ async fn test_recorder_multiple_http_proxies() {
               "content-length": "9",
               "date": "[date]"
             },
-            "body": {
-              "PlainText": "response2"
-            }
+            "body": "response2"
           }
         }
       ]
@@ -178,6 +170,7 @@ async fn test_recorder_http_transform() {
     let options = HttpProxyOptions {
         redact: Box::new(TestHttpRedact),
         transform: Box::new(TestHttpTransform),
+        overrides: Default::default(),
     };
 
     // Add HTTP proxy
@@ -239,9 +232,7 @@ async fn test_recorder_http_transform() {
               "x-signature": "REDACTED",
               "x-timestamp": "TIMESTAMP"
             },
-            "body": {
-              "PlainText": "request1"
-            }
+            "body": "request1"
           }
         },
         {
@@ -255,9 +246,7 @@ async fn test_recorder_http_transform() {
               "content-length": "13",
               "date": "[date]"
             },
-            "body": {
-              "PlainText": "response1"
-            }
+            "body": "response1"
           }
         }
       ]

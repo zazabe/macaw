@@ -17,9 +17,7 @@
                     "accept": "*/*",
                     "host": "127.0.0.1:43047"
                 },
-                "body": {
-                    "Empty": null
-                }
+                "body": null
             }
         },
         {
@@ -33,9 +31,7 @@
                     "content-length": "9",
                     "date": "Sat, 15 Nov 2025 10:42:45 GMT"
                 },
-                "body": {
-                    "PlainText": "response1"
-                }
+                "body": "response1"
             }
         },
         {
@@ -50,9 +46,7 @@
                     "accept": "*/*",
                     "host": "127.0.0.1:40791"
                 },
-                "body": {
-                    "Empty": null
-                }
+                "body": null
             }
         },
         {
@@ -66,9 +60,7 @@
                     "content-length": "9",
                     "date": "Sat, 15 Nov 2025 10:42:45 GMT"
                 },
-                "body": {
-                    "PlainText": "response2"
-                }
+                "body": "response2"
             }
         }
     ]

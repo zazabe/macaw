@@ -98,40 +98,38 @@ impl<D> Event<D> {
 
 // ----------------------------------------
 
-#[dyn_clonable::clonable]
-#[typetag::serde]
-pub trait Content: Send + Sync + Any + fmt::Debug + Clone + 'static {
-    fn to_bytes(&self) -> Result<Bytes, anyhow::Error>;
+#[derive(Debug, Clone)]
+pub enum Content {
+    Text(PlainText),
+    Bytes(Base64),
+    Empty,
 }
 
-impl dyn Content {
-    pub fn from_bytes(bytes: &[u8]) -> Box<dyn Content> {
+impl Content {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
         if bytes.is_empty() {
-            Box::new(Empty)
+            Self::Empty
         } else {
             match String::from_utf8(bytes.to_vec()) {
-                Ok(s) => Box::new(PlainText::new(s)),
-                Err(_) => Box::new(Base64::from_bytes(bytes)),
+                Ok(s) => Self::Text(PlainText::new(s)),
+                Err(_) => Self::Bytes(Base64::from_bytes(bytes)),
             }
         }
     }
 
-    pub fn downcast<T: Content + 'static>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
-        if (*self).as_any().is::<T>() {
-            // It is sound to convert; the trait object is actually T
-            Ok(self.downcast_unchecked())
-        } else {
-            Err(self)
+    pub fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
+        match self {
+            Self::Text(text) => Ok(Bytes::from(text.as_str().as_bytes().to_vec())),
+            Self::Bytes(base64) => Ok(base64.0.clone()),
+            Self::Empty => Ok(Bytes::new()),
         }
     }
 
-    // Helper for unchecked downcast (only call if is::<T>() successful)
-    fn downcast_unchecked<T: Content + 'static>(self: Box<Self>) -> Box<T> {
-        unsafe { Box::from_raw(Box::into_raw(self) as *mut T) }
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    pub fn to_text(&self) -> Result<String, anyhow::Error> {
+        match self {
+            Self::Text(text) => Ok(text.as_str().to_string()),
+            _ => Err(anyhow::anyhow!("Content is not a text")),
+        }
     }
 }
 
@@ -148,39 +146,111 @@ impl PlainText {
     }
 }
 
-#[typetag::serde]
-impl Content for PlainText {
-    fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
-        Ok(Bytes::from(self.0.as_bytes().to_vec()))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Base64(String);
+#[derive(Debug, Clone)]
+pub struct Base64(Bytes);
 
 impl Base64 {
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self(BASE64_STANDARD.encode(bytes))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[typetag::serde]
-impl Content for Base64 {
-    fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
-        Ok(Bytes::from(BASE64_STANDARD.decode(self.0.as_bytes())?))
+        Self(Bytes::from(bytes.to_vec()))
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Empty;
 
-#[typetag::serde]
-impl Content for Empty {
-    fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
-        Ok(Bytes::new())
+// ----------------------------------------
+
+impl Serialize for Content {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Content::Text(text) => serializer.serialize_str(text.as_str()),
+            Content::Bytes(base64) => {
+                use serde::ser::SerializeMap;
+                let base64_str = BASE64_STANDARD.encode(&base64.0);
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("bytes", &base64_str)?;
+                map.end()
+            }
+            Content::Empty => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Content {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+        use std::fmt;
+
+        struct ContentVisitor;
+
+        impl<'de> Visitor<'de> for ContentVisitor {
+            type Value = Content;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string, an object with 'bytes' key, or null")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Content::Text(PlainText::new(value.to_string())))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Content::Text(PlainText::new(value)))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Content::Empty)
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Content::Empty)
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            where
+                V: de::MapAccess<'de>,
+            {
+                let mut bytes_value: Option<String> = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "bytes" {
+                        if bytes_value.is_some() {
+                            return Err(de::Error::duplicate_field("bytes"));
+                        }
+                        bytes_value = Some(map.next_value()?);
+                    } else {
+                        let _: de::IgnoredAny = map.next_value()?;
+                    }
+                }
+                match bytes_value {
+                    Some(base64_str) => {
+                        let decoded = BASE64_STANDARD
+                            .decode(base64_str.as_bytes())
+                            .map_err(|e| de::Error::custom(format!("Invalid base64: {}", e)))?;
+                        Ok(Content::Bytes(Base64(Bytes::from(decoded))))
+                    }
+                    None => Err(de::Error::missing_field("bytes")),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(ContentVisitor)
     }
 }

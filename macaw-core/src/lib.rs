@@ -3,6 +3,7 @@ mod helper;
 mod io;
 mod macaw;
 mod model;
+mod overrides;
 mod parsing;
 mod processor;
 
@@ -12,6 +13,7 @@ pub mod prelude {
     pub use crate::io::*;
     pub use crate::macaw::*;
     pub use crate::model::*;
+    pub use crate::overrides::*;
     pub use crate::parsing::*;
     pub use crate::processor::*;
 }
@@ -21,8 +23,9 @@ pub(crate) mod lib {
     pub(crate) use bytes::Bytes;
     pub(crate) use chrono::{DateTime, Utc};
     pub(crate) use serde::{Deserialize, Serialize};
-    pub(crate) use std::collections::{BTreeMap, HashMap};
+    pub(crate) use std::collections::{BTreeMap, HashMap, HashSet};
     pub(crate) use std::fmt;
+    pub(crate) use std::marker::PhantomData;
     pub(crate) use std::path::{Path, PathBuf};
     pub(crate) use std::pin::Pin;
     pub(crate) use std::str::FromStr;
@@ -37,5 +40,6 @@ pub(crate) mod lib {
     pub(crate) use crate::io::*;
     pub(crate) use crate::macaw::*;
     pub(crate) use crate::model::*;
+    pub(crate) use crate::overrides::*;
     pub(crate) use crate::processor::*;
 }
