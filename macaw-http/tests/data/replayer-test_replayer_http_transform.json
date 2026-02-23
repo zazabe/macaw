@@ -20,9 +20,7 @@
                     "x-signature": "REDACTED",
                     "x-timestamp": "TIMESTAMP"
                 },
-                "body": {
-                    "PlainText": "request1"
-                }
+                "body": "request1"
             }
         },
         {
@@ -36,9 +34,7 @@
                     "content-length": "13",
                     "date": "Sat, 13 Dec 2025 08:43:35 GMT"
                 },
-                "body": {
-                    "PlainText": "response1"
-                }
+                "body": "response1"
             }
         }
     ]

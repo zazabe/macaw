@@ -16,6 +16,7 @@ macaw-core = { path = "../macaw-core" }
 anyhow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
+fs-err.workspace = true
 dyn-clonable.workspace = true
 http.workspace = true
 http-body-util.workspace = true
@@ -26,6 +27,7 @@ itertools.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 typetag.workspace = true

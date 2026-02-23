@@ -69,12 +69,17 @@ impl HttpProxyReplayerActor {
         request: HttpRequestEvent,
         response_sender: ResponseSender<HttpResponseEvent>,
     ) -> Result<(), anyhow::Error> {
-        let decoded_request = self.options.transform.decode_request(request)?;
-        let redacted_request = self.options.redact.http_redact_request(decoded_request);
+        let request_decoded = self.options.transform.decode_request(request)?;
+        let request_overridden = self
+            .options
+            .overrides
+            .http_override_request(request_decoded);
+        let request_redacted = self.options.redact.http_redact_request(request_overridden);
+
         let response_sender =
             HttpResponseSender::new(response_sender, self.options.transform.clone());
         self.pending_requests
-            .add_downstream_request(redacted_request, response_sender)
+            .add_downstream_request(request_redacted, response_sender)
     }
 }
 

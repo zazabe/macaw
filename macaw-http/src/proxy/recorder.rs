@@ -51,7 +51,7 @@ impl HttpProxyRecorderActor {
         self.downstream.start(self.context()).await
     }
 
-    pub(crate) async fn send_request(
+    async fn send_request(
         &self,
         mut request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
@@ -62,6 +62,10 @@ impl HttpProxyRecorderActor {
         let response = HttpResponseEvent::from_response(&res, request_id)?;
         Ok(response)
     }
+
+    fn record<E: RecordEvent>(&self, event: E) -> Result<(), anyhow::Error> {
+        self.recorder.send(RecordedEvent::new(self.proxy_id, event))
+    }
 }
 
 impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
@@ -71,22 +75,38 @@ impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
         &mut self,
         request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let decoded_request = self.options.transform.decode_request(request.clone())?;
-        let redacted_request = self
+        let request_decoded = self.options.transform.decode_request(request.clone())?;
+        let request_overridden = self
             .options
-            .redact
-            .http_redact_request(decoded_request.clone());
-        let encoded_request = self
+            .overrides
+            .http_override_request(request_decoded);
+        let request_encoded = self
             .options
             .transform
-            .encode_request(decoded_request.clone())?;
-        self.recorder
-            .send(RecordedEvent::new(self.proxy_id, redacted_request))?;
-        let response = self.send_request(encoded_request).await?;
-        let decoded_response = self.options.transform.decode_response(response)?;
-        self.recorder
-            .send(RecordedEvent::new(self.proxy_id, decoded_response.clone()))?;
-        let encoded_response = self.options.transform.encode_response(decoded_response)?;
+            .encode_request(request_overridden.clone())?;
+        let response_future = self.send_request(request_encoded);
+
+        let request_redacted = self
+            .options
+            .redact
+            .http_redact_request(request_overridden.clone());
+
+        self.record(request_redacted)?;
+
+        let response = response_future.await?;
+
+        let response_decoded = self.options.transform.decode_response(response)?;
+        let response_overridden = self
+            .options
+            .overrides
+            .http_override_response(response_decoded, request_overridden);
+
+        self.record(response_overridden.clone())?;
+
+        let encoded_response = self
+            .options
+            .transform
+            .encode_response(response_overridden)?;
         Ok(encoded_response)
     }
 }

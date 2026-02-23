@@ -35,9 +35,9 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut request: HttpRequestEvent,
     ) -> Result<HttpRequestEvent, anyhow::Error> {
-        let body = request.body.downcast::<PlainText>().unwrap();
+        let body = request.body.to_text().unwrap();
         let encoded_body = text_wire_encode("TX", body.as_str());
-        request.body = Box::new(PlainText::new(encoded_body));
+        request.body = Content::Text(PlainText::new(encoded_body));
         Ok(request)
     }
 
@@ -45,9 +45,9 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut request: HttpRequestEvent,
     ) -> Result<HttpRequestEvent, anyhow::Error> {
-        let body = request.body.downcast::<PlainText>().unwrap();
+        let body = request.body.to_text().unwrap();
         let decoded_body = text_wire_decode("TX", body.as_str());
-        request.body = Box::new(PlainText::new(decoded_body));
+        request.body = Content::Text(PlainText::new(decoded_body));
         Ok(request)
     }
 
@@ -55,9 +55,9 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut response: HttpResponseEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let body = response.body.downcast::<PlainText>().unwrap();
-        let encoded_body = text_wire_encode("RX", body.as_str());
-        response.body = Box::new(PlainText::new(encoded_body));
+        let body = response.body.to_text().unwrap();
+        let encoded_body = text_wire_encode("RX", &body);
+        response.body = Content::Text(PlainText::new(encoded_body));
         Ok(response)
     }
 
@@ -65,9 +65,9 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut response: HttpResponseEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let body = response.body.downcast::<PlainText>().unwrap();
-        let decoded_body = text_wire_decode("RX", body.as_str());
-        response.body = Box::new(PlainText::new(decoded_body));
+        let body = response.body.to_text().unwrap();
+        let decoded_body = text_wire_decode("RX", &body);
+        response.body = Content::Text(PlainText::new(decoded_body));
         Ok(response)
     }
 }

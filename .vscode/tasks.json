@@ -42,6 +42,30 @@
             ],
         },
         {
+            "label": "test macaw-http",
+            "type": "cargo",
+            "command": "test",
+            "args": [
+                "--all-targets",
+                "--all-features",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/macaw-http"
+            },
+        },
+        {
+            "label": "test macaw-ws",
+            "type": "cargo",
+            "command": "test",
+            "args": [
+                "--all-targets",
+                "--all-features",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/macaw-ws"
+            },
+        },
+        {
             "label": "clippy",
             "type": "cargo",
             "command": "clippy",

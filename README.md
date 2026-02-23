@@ -124,13 +124,42 @@ Protocol-specific crates (e.g., `macaw-http`, `macaw-ws`) implement:
 - **Data Schema**: Define protocol-specific event types that implement `RecordEvent`
 - **Proxy Actors**: Implement `ProxyActor` trait and handle both recording and replay modes
 
-#### Redact/Transform
+#### Redact / Transform / Overrides
 
-Proxies supports two mechanisms for modifying requests and responses:
+Proxies support three mechanisms for modifying requests and responses:
 
 - **Redact**: Removes or masks sensitive or nondeterministic data from requests before recording or matching during replay. This ensures that requests with varying signatures, timestamps, or other dynamic values can be properly matched. For example, redacting authentication headers allows replaying recordings even when credentials change.
 
 - **Transform**: Encodes/decodes requests and responses when they cross the proxy boundary (between downstream clients and upstream servers). This enables custom transformations like request signing, custom compression/decompression, or protocol translation. Transformations are applied bidirectionally: `decode_*` methods process incoming data, while `encode_*` methods process outgoing data.
+
+- **Overrides**: Declarative JSON rules (match + action) applied during recording and replay. Match on method, path, body, headers (HTTP) or message content (WebSocket) via regex; actions can replace values, search-and-replace with capture groups, set headers, or suppress messages (WebSocket only). Supports optional rules. Use cases: redact secrets, normalize dynamic values for deterministic replay, filter noisy messages.
+
+##### Overrides (JSON DSL)
+
+Override rules are defined in a JSON file and loaded via proxy options. Each rule has a `match` (regex on protocol-specific fields) and an `action` (replace, search-and-replace, or suppress). Rules are chained and applied in order. The core framework lives in `macaw-core`; HTTP and WebSocket crates provide protocol-specific rule types (`HttpRequest`, `HttpResponse`, `WsUpstreamMessage`, `WsDownstreamMessage`).
+
+**HTTP examples:**
+
+```json
+[
+  {"HttpRequest": {"match": {"body": "secret.*"}, "action": {"body": "REDACTED"}}},
+  {"HttpRequest": {"match": {"headers": {"authorization": "Bearer .*"}}, "action": {"headers": {"authorization": "Bearer REDACTED"}}}},
+  {"HttpRequest": {"match": {"body": "id_(?P<id>\\d+)"}, "action": {"body": {"search": "id_(?P<id>\\d+)", "replace": {"id": "XXX"}}}}},
+  {"HttpResponse": {"match": {"request": {"path": "/api/users", "method": "POST"}}, "action": {"body": {"search": "user_id=(\\d+)", "replace": "user_id=REDACTED"}}}}
+]
+```
+
+**WebSocket examples:**
+
+```json
+[
+  {"WsUpstreamMessage": {"match": {"message": "secret.*"}, "action": {"message": "REDACTED"}}},
+  {"WsDownstreamMessage": {"match": {"message": "error.*"}, "action": {"message": "OVERRIDDEN_ERROR"}}},
+  {"WsUpstreamMessage": {"match": {"message": "drop_me"}, "action": "ignore"}}
+]
+```
+
+The `"action": "ignore"` form suppresses the message (WebSocket only).
 
 #### Recording Mode
 

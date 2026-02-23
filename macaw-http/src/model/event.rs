@@ -34,7 +34,7 @@ pub struct HttpRequestEvent {
     #[serde(with = "http_version_serde")]
     pub version: http::Version,
     pub headers: BTreeMap<String, String>,
-    pub body: Box<dyn Content>,
+    pub body: Content,
 }
 
 impl HttpRequestEvent {
@@ -49,7 +49,7 @@ impl HttpRequestEvent {
                 .iter()
                 .map(|(k, v)| Ok::<_, anyhow::Error>((k.to_string(), v.to_str()?.to_string())))
                 .try_collect()?,
-            body: <dyn Content>::from_bytes(req.body().to_bytes().as_ref()),
+            body: Content::from_bytes(req.body().to_bytes()),
         })
     }
 
@@ -87,7 +87,7 @@ pub struct HttpResponseEvent {
     #[serde(with = "http_version_serde")]
     pub version: http::Version,
     pub headers: BTreeMap<String, String>,
-    pub body: Box<dyn Content>,
+    pub body: Content,
 }
 
 impl HttpResponseEvent {
@@ -101,7 +101,7 @@ impl HttpResponseEvent {
                 .iter()
                 .map(|(k, v)| Ok::<_, anyhow::Error>((k.to_string(), v.to_str()?.to_string())))
                 .try_collect()?,
-            body: <dyn Content>::from_bytes(res.body().to_bytes().as_ref()),
+            body: Content::from_bytes(res.body().to_bytes()),
         })
     }
 

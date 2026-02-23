@@ -55,18 +55,14 @@ impl WsProxyRecorderActor {
         self.downstream.start(self.context()).await
     }
 
-    fn send_downstream_record(
-        &self,
-        peer_id: WsPeerId,
-        event: WsEvent,
-    ) -> Result<(), anyhow::Error> {
+    fn record_downstream(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
         self.recorder.send(RecordedEvent::new(
             self.proxy_id,
             WsDownstreamEvent::new(peer_id, event),
         ))
     }
 
-    fn send_upstream_record(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
+    fn record_upstream(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
         self.recorder.send(RecordedEvent::new(
             self.proxy_id,
             WsUpstreamEvent::new(peer_id, event),
@@ -82,31 +78,40 @@ impl WsProxyRecorderActor {
             "Received downstream event for peer {}: {:?}",
             peer_id, event
         );
-        let decoded_event = self.options.transform.decode_event(event)?;
-        let redacted_event = self.options.redact.ws_redact_event(decoded_event.clone());
-        self.send_downstream_record(peer_id, redacted_event)?;
-        let encoded_event = self.options.transform.encode_event(decoded_event)?;
-        match encoded_event {
-            WsEvent::Message(message_event) => {
-                self.peers.get(peer_id)?.send(message_event.message)?;
-            }
-            WsEvent::Open(event) => {
-                let request = event.request.update(&self.target_url);
-                let peer = WsPeerActor::connect(
-                    peer_id,
-                    self.context
-                        .create_child(&format!("peer-upstream-{}", peer_id)),
-                    Box::new(self.upstream_sender.clone()),
-                    request,
-                )
-                .await?;
-                let peer_handle = peer.run();
-                self.peers.insert(peer_id, peer_handle);
-            }
-            WsEvent::Disconnect => {
-                let peer = self.peers.get(peer_id)?;
-                peer.stop();
-                self.peers.remove(peer_id);
+        let event_decoded = self.options.transform.decode_event(event)?;
+        let event_overridden = self
+            .options
+            .overrides
+            .ws_downstream_override_event(event_decoded);
+        if let Some(event_overridden) = event_overridden {
+            let event_redacted = self
+                .options
+                .redact
+                .ws_redact_event(event_overridden.clone());
+            self.record_downstream(peer_id, event_redacted)?;
+            let event_encoded = self.options.transform.encode_event(event_overridden)?;
+            match event_encoded {
+                WsEvent::Message(message_event) => {
+                    self.peers.get(peer_id)?.send(message_event.message)?;
+                }
+                WsEvent::Open(event) => {
+                    let request = event.request.update(&self.target_url);
+                    let peer = WsPeerActor::connect(
+                        peer_id,
+                        self.context
+                            .create_child(&format!("peer-upstream-{}", peer_id)),
+                        Box::new(self.upstream_sender.clone()),
+                        request,
+                    )
+                    .await?;
+                    let peer_handle = peer.run();
+                    self.peers.insert(peer_id, peer_handle);
+                }
+                WsEvent::Disconnect => {
+                    let peer = self.peers.get(peer_id)?;
+                    peer.stop();
+                    self.peers.remove(peer_id);
+                }
             }
         }
         Ok(())
@@ -121,14 +126,22 @@ impl WsProxyRecorderActor {
 
         match event {
             WsEvent::Message(message_event) => {
-                let decoded_event = self
+                let event_decoded = self
                     .options
                     .transform
                     .decode_event(WsEvent::Message(message_event))?;
-                self.send_upstream_record(peer_id, decoded_event.clone())?;
-                let encoded_event = self.options.transform.encode_event(decoded_event)?;
-                if let WsEvent::Message(message_event) = encoded_event {
-                    self.downstream.send(peer_id, message_event.message)?;
+
+                let event_overridden = self
+                    .options
+                    .overrides
+                    .ws_upstream_override_event(event_decoded);
+
+                if let Some(event_overridden) = event_overridden {
+                    self.record_upstream(peer_id, event_overridden.clone())?;
+                    let encoded_event = self.options.transform.encode_event(event_overridden)?;
+                    if let WsEvent::Message(message_event) = encoded_event {
+                        self.downstream.send(peer_id, message_event.message)?;
+                    }
                 }
             }
             WsEvent::Open(..) => {
