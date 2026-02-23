@@ -1,5 +1,3 @@
-use std::io::BufReader;
-
 use itertools::Either;
 
 use crate::lib::*;
@@ -13,10 +11,7 @@ pub struct WsOverrideRules {
 
 impl WsOverrideRules {
     pub fn from_file(path: &Path) -> Result<Self, anyhow::Error> {
-        let file = fs_err::File::open(path)?;
-        let reader = BufReader::new(file);
-        let rules: WsOverrideRules = serde_json::from_reader(reader)?;
-        Ok(rules)
+        parse_json_or_yaml(path)
     }
 }
 

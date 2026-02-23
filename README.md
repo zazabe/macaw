@@ -132,11 +132,11 @@ Proxies support three mechanisms for modifying requests and responses:
 
 - **Transform**: Encodes/decodes requests and responses when they cross the proxy boundary (between downstream clients and upstream servers). This enables custom transformations like request signing, custom compression/decompression, or protocol translation. Transformations are applied bidirectionally: `decode_*` methods process incoming data, while `encode_*` methods process outgoing data.
 
-- **Overrides**: Declarative JSON rules (match + action) applied during recording and replay. Match on method, path, body, headers (HTTP) or message content (WebSocket) via regex; actions can replace values, search-and-replace with capture groups, set headers, or suppress messages (WebSocket only). Supports optional rules. Use cases: redact secrets, normalize dynamic values for deterministic replay, filter noisy messages.
+- **Overrides**: Declarative JSON or YAML rules (match + action) applied during recording and replay. Match on method, path, body, headers (HTTP) or message content (WebSocket) via regex; actions can replace values, search-and-replace with capture groups, set headers, or suppress messages (WebSocket only). Supports optional rules. Use cases: redact secrets, normalize dynamic values for deterministic replay, filter noisy messages.
 
-##### Overrides (JSON DSL)
+##### Overrides (JSON/YAML DSL)
 
-Override rules are defined in a JSON file and loaded via proxy options. Each rule has a `match` (regex on protocol-specific fields) and an `action` (replace, search-and-replace, or suppress). Rules are chained and applied in order. The core framework lives in `macaw-core`; HTTP and WebSocket crates provide protocol-specific rule types (`HttpRequest`, `HttpResponse`, `WsUpstreamMessage`, `WsDownstreamMessage`).
+Override rules are defined in a JSON or YAML file and loaded via proxy options. Format is detected by file extension (`.json`, `.yaml`, `.yml`); files without a recognized extension try JSON first, then YAML. Each rule has a `match` (regex on protocol-specific fields) and an `action` (replace, search-and-replace, or suppress). Rules are chained and applied in order. The core framework lives in `macaw-core`; HTTP and WebSocket crates provide protocol-specific rule types (`HttpRequest`, `HttpResponse`, `WsUpstreamMessage`, `WsDownstreamMessage`).
 
 **HTTP examples:**
 
@@ -160,6 +160,20 @@ Override rules are defined in a JSON file and loaded via proxy options. Each rul
 ```
 
 The `"action": "ignore"` form suppresses the message (WebSocket only).
+
+**YAML equivalent** (use `!Tag` for rule types):
+
+```yaml
+- !WsUpstreamMessage
+  match:
+    message: "secret.*"
+  action:
+    message: "REDACTED"
+- !WsUpstreamMessage
+  match:
+    message: "drop_me"
+  action: ignore
+```
 
 #### Recording Mode
 
