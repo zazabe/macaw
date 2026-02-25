@@ -8,22 +8,32 @@ pub(crate) enum ReplayerCommand {
 
 type ProxySender = Box<dyn ActorSender<RecordedEventWithLock>>;
 
+/// Options for the Replayer, including optional debug sink.
+#[derive(Debug, Default)]
+pub struct ReplayerOptions {
+    /// When set, each replayed event is cloned and sent here before being sent to proxies.
+    pub debug_tx: Option<mpsc::UnboundedSender<RecordedEvent>>,
+}
+
 #[derive(Debug)]
 pub struct Replayer {
     events: EventStore,
     proxies: HashMap<ProxyId, ProxySender>,
     context: ActorContext,
+    debug_tx: Option<mpsc::UnboundedSender<RecordedEvent>>,
 }
 
 impl Replayer {
     pub(crate) fn new<P: AsRef<Path>>(
         context: ActorContext,
         path: P,
+        options: ReplayerOptions,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             context,
             events: EventStore::from_file(path.as_ref())?,
             proxies: HashMap::new(),
+            debug_tx: options.debug_tx,
         })
     }
 }
@@ -58,6 +68,12 @@ impl Replayer {
     async fn play(&mut self) -> Result<(), anyhow::Error> {
         for event in self.events.iter() {
             let Event { proxy_id, data, .. } = event;
+            if let Some(ref tx) = self.debug_tx {
+                let _ = tx.send(RecordedEvent {
+                    proxy_id,
+                    event: data.clone(),
+                });
+            }
             let (replay_lock_holder, replay_lock) = lock_channel();
             let proxy = self.proxies.get(&proxy_id).ok_or(anyhow::anyhow!(
                 "Proxy {:?} not found in {:?}",

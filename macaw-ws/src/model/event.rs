@@ -13,8 +13,43 @@ pub(crate) struct WsUpstreamEvent {
     pub(crate) event: WsEvent,
 }
 
+fn format_ws_event(event: &WsEvent) -> String {
+    match event {
+        WsEvent::Open(open) => format!("Open({})", open.request.uri.path()),
+        WsEvent::Message(msg) => format_ws_message(&msg.message),
+        WsEvent::Disconnect => "Disconnect".to_string(),
+    }
+}
+
+fn format_ws_message(msg: &WsMessage) -> String {
+    match msg {
+        WsMessage::Text(s) => {
+            let single = to_single_line(s);
+            if single.len() > 2000 {
+                format!("{}...", &single[..1997])
+            } else {
+                single
+            }
+        }
+        WsMessage::Binary(_) => "<binary>".to_string(),
+        WsMessage::Ping(_) => "<ping>".to_string(),
+        WsMessage::Pong(_) => "<pong>".to_string(),
+        WsMessage::Close(_) => "<close>".to_string(),
+    }
+}
+
 #[typetag::serde(name = "WsUpstream")]
-impl RecordEvent for WsUpstreamEvent {}
+impl RecordEvent for WsUpstreamEvent {
+    fn format_debug(&self) -> RecordFormatter {
+        RecordFormatter::new(
+            DebugDirection::UpstreamToDownstream,
+            vec![
+                RecordPart::StreamType("WS".to_string()),
+                RecordPart::Content(format_ws_event(&self.event)),
+            ],
+        )
+    }
+}
 
 impl WsUpstreamEvent {
     pub(crate) fn new(peer_id: WsPeerId, event: WsEvent) -> Self {
@@ -29,7 +64,17 @@ pub(crate) struct WsDownstreamEvent {
 }
 
 #[typetag::serde(name = "WsDownstream")]
-impl RecordEvent for WsDownstreamEvent {}
+impl RecordEvent for WsDownstreamEvent {
+    fn format_debug(&self) -> RecordFormatter {
+        RecordFormatter::new(
+            DebugDirection::DownstreamToUpstream,
+            vec![
+                RecordPart::StreamType("WS".to_string()),
+                RecordPart::Content(format_ws_event(&self.event)),
+            ],
+        )
+    }
+}
 
 impl WsDownstreamEvent {
     pub(crate) fn new(peer_id: WsPeerId, event: WsEvent) -> Self {
@@ -142,15 +187,15 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    pub(crate) fn update(mut self, target_url: &TargetUrl) -> Self {
-        self.uri = target_url.apply(&self.uri);
+    pub(crate) fn update(mut self, target_url: &TargetUrl) -> Result<Self, anyhow::Error> {
+        self.uri = target_url.apply(&self.uri)?;
         self.headers.insert(
             http::header::HOST.to_string(),
             target_url.authority.to_string(),
         );
         // TODO: support websocket extensions
         self.headers.remove("sec-websocket-extensions");
-        self
+        Ok(self)
     }
 
     pub(crate) fn from_request(

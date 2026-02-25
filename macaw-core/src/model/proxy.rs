@@ -8,6 +8,10 @@ impl ProxyId {
     pub fn new(name: &str) -> Result<Self, anyhow::Error> {
         Ok(Self(ArrayString::from_str(name)?))
     }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 }
 
 impl fmt::Display for ProxyId {

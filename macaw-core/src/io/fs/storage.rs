@@ -24,6 +24,21 @@ impl EventStore {
         }
     }
 
+    pub(crate) fn events_count(&self) -> usize {
+        self.events.len()
+    }
+
+    pub(crate) fn duration(&self) -> Option<Duration> {
+        let start = self.events.first()?;
+        let end = self.events.last()?;
+        Some(
+            end.timestamp
+                .signed_duration_since(start.timestamp)
+                .to_std()
+                .unwrap(),
+        )
+    }
+
     /// Load all events from a single JSON document containing a top-level struct.
     pub(crate) fn from_file<P>(path: P) -> Result<Self, anyhow::Error>
     where

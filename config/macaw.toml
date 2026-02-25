@@ -1,0 +1,10 @@
+[proxies.http_demo]
+type = "http"
+bind = "127.0.0.1:9999"
+target = "https://httpbin.org/"
+overrides = "./overrides/http_demo.yaml"
+
+[proxies.ws_demo]
+type = "ws"
+bind = "127.0.0.1:9988"
+target = "wss://echo.websocket.org/"

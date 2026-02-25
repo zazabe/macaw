@@ -1,3 +1,4 @@
+mod config;
 mod options;
 mod recorder;
 mod replayer;

@@ -5,6 +5,7 @@
   "service": "macaw",
   "remoteUser": "dev",
   "forwardPorts": [],
+  "postCreateCommand": ".devcontainer/scripts/post_create.sh",
   "otherPortsAttributes": {
     "onAutoForward": "ignore"
   },

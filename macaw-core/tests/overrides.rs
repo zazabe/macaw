@@ -336,7 +336,7 @@ struct TestAction {
 impl TestAction {
     fn apply(&self, event: TestEvent) -> TestEvent {
         let new_value = self.value.transform(event.value.clone());
-        let new_headers: BTreeMap<String, String> =
+        let new_headers: BTreeMap<String, Option<String>> =
             self.headers.transform(event.headers.into_iter()).collect();
         serde_json::from_value(json!({ "value": new_value, "headers": new_headers })).unwrap()
     }

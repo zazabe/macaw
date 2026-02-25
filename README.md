@@ -57,6 +57,43 @@ macaw.play()?;
 macaw.wait_until_stopped().await?;
 ```
 
+## CLI
+
+The `macaw` binary provides record and replay commands driven by a TOML config file:
+
+```bash
+# Record (proxies from macaw.toml)
+macaw record ./data/record.json
+
+# Replay
+macaw replay ./data/record.json
+
+# With debug mode (one-line traffic per message)
+macaw -d record ./data/record.json
+macaw -d replay ./data/record.json
+
+# Custom config file
+macaw -c my_config.toml record ./data/record.json
+```
+
+### Config file (macaw.toml)
+
+```toml
+[proxies.http_demo]
+type = "http"
+bind = "127.0.0.1:8800"
+target = "https://httpbin.org/"   # required for record, ignored for replay
+overrides = "./overrides/http.json"  # optional
+
+[proxies.ws_demo]
+type = "ws"
+bind = "127.0.0.1:8801"
+target = "wss://echo.websocket.org/"
+overrides = "./overrides/ws.json"
+```
+
+Recording stops and saves when you press Ctrl+C or kill the process.
+
 ## Building
 
 ```bash

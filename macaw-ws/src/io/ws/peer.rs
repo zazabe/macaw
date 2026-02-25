@@ -51,7 +51,8 @@ impl WsPeerActor {
         request: HttpRequest,
     ) -> Result<Self, anyhow::Error> {
         debug!("Peer {} connecting to {:?}", peer_id, request);
-        let (sink, stream) = connect(request.clone().into_request()?).await?;
+        let ws_request = request.clone().into_request()?;
+        let (sink, stream) = connect(ws_request).await?;
         Self::new(peer_id, context, sender, request, sink, stream)
     }
 

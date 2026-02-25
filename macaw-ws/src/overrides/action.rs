@@ -11,7 +11,7 @@ impl TransformAction for WsMessageAction {
 
     fn apply(&self, message: Self::Message) -> Self::Message {
         if let WsMessage::Text(text) = message {
-            return WsMessage::Text(self.message.transform(text));
+            return WsMessage::Text(self.message.transform(text).unwrap_or_default());
         }
         message
     }

@@ -15,15 +15,11 @@ pub(crate) struct HttpRequestMatcher {
 
 impl HttpRequestMatcher {
     pub(crate) fn is_match(&self, request: &HttpRequestEvent) -> bool {
-        match request.body.to_text() {
-            Ok(body_text) => {
-                self.method.is_match(request.method.as_str())
-                    && self.path.is_match(&request.uri.to_string())
-                    && self.body.is_match(&body_text)
-                    && self.headers.is_match(request.headers.iter())
-            }
-            Err(_) => false,
-        }
+        let body_as_text = request.body.to_text().ok().unwrap_or_default();
+        self.method.is_match(request.method.as_str())
+            && self.path.is_match(&request.uri.to_string())
+            && self.body.is_match(&body_as_text)
+            && self.headers.is_match(request.headers.iter())
     }
 }
 
@@ -46,14 +42,10 @@ impl HttpResponseMatcher {
         response: &HttpResponseEvent,
         request: &HttpRequestEvent,
     ) -> bool {
-        match response.body.to_text() {
-            Ok(body_text) => {
-                self.status.is_match(response.status.as_str())
-                    && self.body.is_match(&body_text)
-                    && self.headers.is_match(response.headers.iter())
-                    && self.request.is_match(request)
-            }
-            Err(_) => false,
-        }
+        let body_as_text = response.body.to_text().ok().unwrap_or_default();
+        self.status.is_match(response.status.as_str())
+            && self.body.is_match(&body_as_text)
+            && self.headers.is_match(response.headers.iter())
+            && self.request.is_match(request)
     }
 }

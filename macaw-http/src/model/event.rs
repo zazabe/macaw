@@ -63,7 +63,7 @@ impl HttpRequestEvent {
             builder = builder.header(key, value);
         }
 
-        let body = BodyBytes::new(self.body.to_bytes()?);
+        let body = BodyBytes::new(self.body.to_bytes());
 
         Ok(builder.body(body)?)
     }
@@ -77,7 +77,20 @@ impl HttpRequestEvent {
 }
 
 #[typetag::serde(name = "HttpRequest")]
-impl RecordEvent for HttpRequestEvent {}
+impl RecordEvent for HttpRequestEvent {
+    fn format_debug(&self) -> RecordFormatter {
+        RecordFormatter::new(
+            DebugDirection::DownstreamToUpstream,
+            vec![
+                RecordPart::StreamType("HTTP".to_string()),
+                RecordPart::Id(self.request_id.simple().to_string()),
+                RecordPart::Meta(self.method.to_string()),
+                RecordPart::Meta(self.uri.path().to_string()),
+                RecordPart::Content(body_preview(&self.body)),
+            ],
+        )
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpResponseEvent {
@@ -114,11 +127,38 @@ impl HttpResponseEvent {
             builder = builder.header(key, value);
         }
 
-        let body = BodyBytes::new(self.body.to_bytes()?);
+        let body = BodyBytes::new(self.body.to_bytes());
 
         Ok(builder.body(body)?)
     }
 }
 
+fn body_preview(body: &Content) -> String {
+    match body {
+        Content::Text(t) => {
+            let s = to_single_line(t.as_str());
+            if s.len() > 1000 {
+                format!("{}...", &s[..997])
+            } else {
+                s
+            }
+        }
+        Content::Bytes(_) => "<binary>".to_string(),
+        Content::Empty => "<empty>".to_string(),
+    }
+}
+
 #[typetag::serde(name = "HttpResponse")]
-impl RecordEvent for HttpResponseEvent {}
+impl RecordEvent for HttpResponseEvent {
+    fn format_debug(&self) -> RecordFormatter {
+        RecordFormatter::new(
+            DebugDirection::UpstreamToDownstream,
+            vec![
+                RecordPart::StreamType("HTTP".to_string()),
+                RecordPart::Id(self.request_id.simple().to_string()),
+                RecordPart::Meta(self.status.to_string()),
+                RecordPart::Content(body_preview(&self.body)),
+            ],
+        )
+    }
+}
