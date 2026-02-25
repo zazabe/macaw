@@ -1,3 +1,4 @@
+use macaw_core::prelude::*;
 use macaw_http::prelude::*;
 use serde_json::json;
 
@@ -8,6 +9,14 @@ fn test_match_method() {
     ]));
 
     let req = request_event("POST", "/api", "original", []);
+    let out = rules.http_override_request(req);
+    assert_eq!(out.body.to_text().unwrap(), "matched_by_method");
+
+    let req = request_event("POST", "/api", (), []);
+    let out = rules.http_override_request(req);
+    assert_eq!(out.body.to_text().unwrap(), "matched_by_method");
+
+    let req = request_event("POST", "/api", vec![1, 2, 3], []);
     let out = rules.http_override_request(req);
     assert_eq!(out.body.to_text().unwrap(), "matched_by_method");
 
@@ -88,19 +97,19 @@ fn test_match_response_on_request() {
     let rules = rules_from_json(json!([
         {"HttpResponse": {
             "match": {"request": {"path": "/api/users", "method": "POST"}},
-            "action": {"body": {"search": "user_id=(\\d+)", "replace": "user_id=REDACTED"}}
+            "action": {"body": "overridden_body"}
         }}
     ]));
 
     let req = request_event("POST", "/api/users", "create", []);
-    let res = response_event(
-        "00000000-0000-0000-0000-000000000001",
-        200,
-        "created user_id=12345",
-        [],
-    );
+    let res = response_event("00000000-0000-0000-0000-000000000001", 200, (), []);
     let out = rules.http_override_response(res, req);
-    assert_eq!(out.body.to_text().unwrap(), "created user_id=REDACTED");
+    assert_eq!(out.body.to_text().unwrap(), "overridden_body");
+
+    let req = request_event("POST", "/api/users", "create", []);
+    let res = response_event("00000000-0000-0000-0000-000000000001", 200, "body", []);
+    let out = rules.http_override_response(res, req);
+    assert_eq!(out.body.to_text().unwrap(), "overridden_body");
 
     let req = request_event("GET", "/api/users", "", []);
     let res = response_event(
@@ -111,6 +120,20 @@ fn test_match_response_on_request() {
     );
     let out = rules.http_override_response(res, req);
     assert_eq!(out.body.to_text().unwrap(), "user_id=999");
+}
+
+#[test]
+fn test_action_replace_body_empty() {
+    let rules = rules_from_json(json!([
+        {"HttpRequest": {
+            "match": {"body": "hello_(.+)"},
+            "action": {"body": null}
+        }}
+    ]));
+
+    let req = request_event("POST", "/", "hello_world", []);
+    let out = rules.http_override_request(req);
+    assert!(out.body.is_empty());
 }
 
 #[test]
@@ -146,16 +169,27 @@ fn test_action_replace_headers() {
     let rules = rules_from_json(json!([
         {"HttpRequest": {
             "match": {"body": ".*"},
-            "action": {"headers": {"x-custom": "custom_value"}}
+            "action": {"headers": {
+                "x-custom": "new",
+                "x-custom-2": null
+            }}
         }}
     ]));
 
-    let req = request_event("POST", "/", "body", [("x-custom".into(), "old".into())]);
-    let out = rules.http_override_request(req);
-    assert_eq!(
-        out.headers.get("x-custom"),
-        Some(&"custom_value".to_string())
+    let req = request_event(
+        "POST",
+        "/",
+        "body",
+        [
+            ("x-custom".into(), "old".into()),
+            ("x-custom-2".into(), "old".into()),
+            ("x-custom-3".into(), "old".into()),
+        ],
     );
+    let out = rules.http_override_request(req);
+    assert_eq!(out.headers.get("x-custom"), Some(&"new".to_string()));
+    assert_eq!(out.headers.get("x-custom-2"), Some(&"".to_string()));
+    assert_eq!(out.headers.get("x-custom-3"), None);
 }
 
 #[test]
@@ -209,10 +243,10 @@ fn test_action_response_body_and_headers() {
 
 // ---------------------------------------------------------------------------
 
-fn request_event(
+fn request_event<B: Into<Content>>(
     method: &str,
     path: &str,
-    body: &str,
+    body: B,
     headers: impl IntoIterator<Item = (String, String)>,
 ) -> HttpRequestEvent {
     serde_json::from_value(json!({
@@ -221,15 +255,15 @@ fn request_event(
         "uri": path,
         "version": "HTTP/1.1",
         "headers": headers.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
-        "body": body
+        "body": body.into()
     }))
     .unwrap()
 }
 
-fn response_event(
+fn response_event<B: Into<Content>>(
     request_id: &str,
     status: u16,
-    body: &str,
+    body: B,
     headers: impl IntoIterator<Item = (String, String)>,
 ) -> HttpResponseEvent {
     serde_json::from_value(json!({
@@ -237,7 +271,7 @@ fn response_event(
         "status": status,
         "version": "HTTP/1.1",
         "headers": headers.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
-        "body": body
+        "body": body.into()
     }))
     .unwrap()
 }

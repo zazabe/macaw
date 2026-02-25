@@ -25,9 +25,13 @@ impl<P: Processor> Macaw<P> {
 
 impl Macaw<Recorder> {
     pub fn recorder() -> Self {
+        Self::recorder_with_options(RecorderOptions::default())
+    }
+
+    pub fn recorder_with_options(options: RecorderOptions) -> Self {
         let context = AppContext::new();
         let actor_context = context.actor_context("recorder");
-        let processor = Recorder::new(actor_context);
+        let processor = Recorder::new(actor_context, options);
         let handle = processor.run();
         Self {
             context,
@@ -36,12 +40,16 @@ impl Macaw<Recorder> {
         }
     }
 
-    pub async fn record_when_exit<P: AsRef<Path>>(self, path: P) -> Result<(), AppError> {
+    pub async fn record_when_exit<P: AsRef<Path>>(
+        self,
+        path: P,
+    ) -> Result<RecorderOutcome, AppError> {
         self.context.wait_until_exit().await?;
-        self.processor
+        let stats = self
+            .processor
             .request(RecorderCommand::WriteToFile(path.as_ref().to_path_buf()))
             .await?;
-        Ok(())
+        Ok(stats)
     }
 
     pub fn add_proxy<P, F>(&mut self, f: F) -> Result<(ProxyId, ActorHandle<P>), anyhow::Error>
@@ -61,9 +69,16 @@ impl Macaw<Recorder> {
 
 impl Macaw<Replayer> {
     pub fn replayer<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
+        Self::replayer_with_options(path, ReplayerOptions::default())
+    }
+
+    pub fn replayer_with_options<P: AsRef<Path>>(
+        path: P,
+        options: ReplayerOptions,
+    ) -> Result<Self, anyhow::Error> {
         let context = AppContext::new();
         let actor_context = context.actor_context("replayer");
-        let processor = Replayer::new(actor_context, path)?;
+        let processor = Replayer::new(actor_context, path, options)?;
         let handle = processor.run();
         Ok(Self {
             context,

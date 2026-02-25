@@ -1,0 +1,6 @@
+- !HttpResponse
+  match:
+    request:
+      method: GET
+  action:
+    body: "REDACTED"

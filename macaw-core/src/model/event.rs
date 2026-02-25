@@ -35,10 +35,108 @@ impl RecordedEventWithLock {
     }
 }
 
+/// Direction of traffic for debug output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugDirection {
+    /// Downstream to upstream (client → server)
+    DownstreamToUpstream,
+    /// Upstream to downstream (server → client)
+    UpstreamToDownstream,
+}
+
+impl DebugDirection {
+    pub fn arrow(&self) -> &'static str {
+        match self {
+            Self::DownstreamToUpstream => "→",
+            Self::UpstreamToDownstream => "←",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RecordPart {
+    // e.g. HTTP, WS, etc...
+    StreamType(String),
+    // e.g. Body, WS message, etc...
+    Content(String),
+    // Message ID if any
+    Id(String),
+    // Metadata like HTTP Method, Status, etc...
+    Meta(String),
+}
+
+impl RecordPart {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::StreamType(s) => s.len(),
+            Self::Content(s) => s.len(),
+            Self::Id(s) => s.len(),
+            Self::Meta(s) => s.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::StreamType(s) => s.is_empty(),
+            Self::Content(s) => s.is_empty(),
+            Self::Id(s) => s.is_empty(),
+            Self::Meta(s) => s.is_empty(),
+        }
+    }
+
+    pub fn replace(&self, text: &str) -> Self {
+        match self {
+            Self::StreamType(..) => Self::StreamType(text.to_string()),
+            Self::Content(..) => Self::Content(text.to_string()),
+            Self::Id(..) => Self::Id(text.to_string()),
+            Self::Meta(..) => Self::Meta(text.to_string()),
+        }
+    }
+}
+
+impl fmt::Display for RecordPart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StreamType(s) => write!(f, "{}", s),
+            Self::Content(s) => write!(f, "{}", s),
+            Self::Id(s) => write!(f, "{}", s),
+            Self::Meta(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct RecordFormatter {
+    direction: DebugDirection,
+    parts: Vec<RecordPart>,
+}
+
+impl RecordFormatter {
+    pub fn new(direction: DebugDirection, parts: Vec<RecordPart>) -> Self {
+        Self { direction, parts }
+    }
+
+    pub fn direction(&self) -> DebugDirection {
+        self.direction
+    }
+
+    pub fn parts(&self) -> &[RecordPart] {
+        &self.parts
+    }
+}
+
 /// Trait to support ser/de for generic RecordEvent, allowing to record and replay generic events.
 #[dyn_clonable::clonable]
 #[typetag::serde]
-pub trait RecordEvent: Send + Sync + Any + fmt::Debug + Clone + 'static {}
+pub trait RecordEvent: Send + Sync + Any + fmt::Debug + Clone + 'static {
+    /// Format this event for human-readable debug output. Returns (direction, formatted string).
+    fn format_debug(&self) -> RecordFormatter {
+        RecordFormatter::new(
+            DebugDirection::DownstreamToUpstream,
+            vec![RecordPart::Content(format!("{:?}", self))],
+        )
+    }
+}
 
 impl dyn RecordEvent {
     pub fn downcast<T: RecordEvent + 'static>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
@@ -117,11 +215,11 @@ impl Content {
         }
     }
 
-    pub fn to_bytes(&self) -> Result<Bytes, anyhow::Error> {
+    pub fn to_bytes(&self) -> Bytes {
         match self {
-            Self::Text(text) => Ok(Bytes::from(text.as_str().as_bytes().to_vec())),
-            Self::Bytes(base64) => Ok(base64.0.clone()),
-            Self::Empty => Ok(Bytes::new()),
+            Self::Text(text) => Bytes::from(text.as_str().as_bytes().to_vec()),
+            Self::Bytes(base64) => base64.0.clone(),
+            Self::Empty => Bytes::new(),
         }
     }
 
@@ -131,14 +229,18 @@ impl Content {
             _ => Err(anyhow::anyhow!("Content is not a text")),
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlainText(String);
 
 impl PlainText {
-    pub fn new(data: String) -> Self {
-        Self(data)
+    pub fn new<S: ToString>(data: S) -> Self {
+        Self(data.to_string())
     }
 
     pub fn as_str(&self) -> &str {
@@ -159,6 +261,45 @@ impl Base64 {
 pub struct Empty;
 
 // ----------------------------------------
+
+impl From<String> for Content {
+    fn from(s: String) -> Self {
+        Content::Text(PlainText::new(s))
+    }
+}
+
+impl From<&str> for Content {
+    fn from(s: &str) -> Self {
+        Content::Text(PlainText::new(s.to_string()))
+    }
+}
+
+impl From<Bytes> for Content {
+    fn from(bytes: Bytes) -> Self {
+        Content::Bytes(Base64::from_bytes(&bytes))
+    }
+}
+
+impl From<Vec<u8>> for Content {
+    fn from(bytes: Vec<u8>) -> Self {
+        Content::Bytes(Base64::from_bytes(&bytes))
+    }
+}
+
+impl From<()> for Content {
+    fn from(_: ()) -> Self {
+        Content::Empty
+    }
+}
+
+impl<T: Into<Content>> From<Option<T>> for Content {
+    fn from(option: Option<T>) -> Self {
+        match option {
+            Some(value) => value.into(),
+            None => Content::Empty,
+        }
+    }
+}
 
 impl Serialize for Content {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

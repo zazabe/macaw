@@ -95,15 +95,15 @@ impl WsProxyRecorderActor {
                     self.peers.get(peer_id)?.send(message_event.message)?;
                 }
                 WsEvent::Open(event) => {
-                    let request = event.request.update(&self.target_url);
-                    let peer = WsPeerActor::connect(
-                        peer_id,
-                        self.context
-                            .create_child(&format!("peer-upstream-{}", peer_id)),
-                        Box::new(self.upstream_sender.clone()),
-                        request,
-                    )
-                    .await?;
+                    println!("request:\n{:?}", event.request);
+                    println!("target:\n{:?}", self.target_url);
+
+                    let request = event.request.update(&self.target_url)?;
+                    let context = self
+                        .context
+                        .create_child(&format!("peer-upstream-{}", peer_id));
+                    let sender = Box::new(self.upstream_sender.clone());
+                    let peer = WsPeerActor::connect(peer_id, context, sender, request).await?;
                     let peer_handle = peer.run();
                     self.peers.insert(peer_id, peer_handle);
                 }

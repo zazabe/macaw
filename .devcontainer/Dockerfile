@@ -25,10 +25,19 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/home/$USERNA
     && chown $USERNAME:$USERNAME "/home/$USERNAME/.bashrc"
 WORKDIR /workspace/$PROJECT_NAME
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates locales \
+    git less jq zip curl dnsutils net-tools && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
+
 # Keep cargo cache in persistent volume
 ENV CARGO_HOME=/home/$USERNAME/.cache/.storage/cargo
+ENV PATH=$PATH:/home/$USERNAME/.cache/.storage/cargo/bin
 
-RUN rustup component add rustfmt clippy
-RUN cargo install --locked tokio-console cargo-insta
 
 ENTRYPOINT ["sleep", "infinity"]

@@ -8,9 +8,9 @@ pub(crate) struct HttpRequestAction {
     #[serde(default, skip_serializing_if = "is_default")]
     path: FieldAction,
     #[serde(default, skip_serializing_if = "is_default")]
-    body: FieldAction,
+    body: BodyAction,
     #[serde(default, skip_serializing_if = "is_default")]
-    headers: MapAction,
+    headers: HeaderAction,
 }
 
 impl TransformAction for HttpRequestAction {
@@ -25,15 +25,17 @@ impl TransformAction for HttpRequestAction {
             request_id,
             version,
         } = request;
-        let uri_new_str = self.path.transform(uri.to_string());
+        let uri_new_str = self.path.transform(uri.to_string()).unwrap_or_default();
         let uri_new = uri_new_str
             .parse()
             .unwrap_or_else(|e| panic!("Cannot parse `Uri` '{}': {}", uri_new_str, e));
-        let body_text = body.to_text().expect("Body content must be a text");
         HttpRequestEvent {
             method: self.method.transform(method),
             uri: uri_new,
-            body: Content::Text(PlainText::new(self.body.transform(body_text))),
+            body: self
+                .body
+                .try_apply(body)
+                .unwrap_or_else(|e| panic!("Cannot transform body content: {}", e)),
             headers: self.headers.transform(headers.into_iter()).collect(),
             request_id,
             version,
@@ -49,7 +51,7 @@ pub(crate) struct HttpResponseAction {
     #[serde(default, skip_serializing_if = "is_default")]
     body: BodyAction,
     #[serde(default, skip_serializing_if = "is_default")]
-    headers: MapAction,
+    headers: HeaderAction,
 }
 
 impl TransformAction for HttpResponseAction {
@@ -69,7 +71,7 @@ impl TransformAction for HttpResponseAction {
             body: self
                 .body
                 .try_apply(body)
-                .expect("Body content must be a text"),
+                .unwrap_or_else(|e| panic!("Cannot transform body content: {}", e)),
             headers: self.headers.transform(headers.into_iter()).collect(),
             request_id,
             version,
@@ -118,11 +120,29 @@ impl TryTransformAction for BodyAction {
         match content {
             Content::Text(text) => {
                 let text = text.as_str().to_string();
-                let text_transformed = self.0.transform(text);
-                Ok(Content::Text(PlainText::new(text_transformed)))
+                Ok(Content::from(self.0.transform(text)))
             }
-            Content::Bytes(..) => Err(anyhow::anyhow!("Cannot transform bytes content")),
-            Content::Empty => Err(anyhow::anyhow!("Cannot transform empty content")),
+            Content::Bytes(..) | Content::Empty => match &self.0 {
+                FieldAction::Replace(replacement) => Ok(Content::from(replacement.clone())),
+                FieldAction::NoOperation => Ok(content),
+                FieldAction::SearchAndReplace(..) => Err(anyhow::anyhow!(
+                    "Cannot transform content with search and replace action"
+                )),
+            },
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Default, Debug, Clone)]
+struct HeaderAction(MapAction);
+
+impl HeaderAction {
+    pub fn transform<I>(&self, map: I) -> impl Iterator<Item = (String, String)>
+    where
+        I: Iterator<Item = (String, String)>,
+    {
+        self.0
+            .transform(map)
+            .map(|(key, value)| (key, value.unwrap_or_default()))
     }
 }

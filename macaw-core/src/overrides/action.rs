@@ -57,20 +57,20 @@ impl<T: TransformAction> Default for TransformOrIgnoreAction<T> {
 #[serde(try_from = "FieldActionRaw")]
 #[derive(Default)]
 pub enum FieldAction {
-    Replace(String),
+    Replace(Option<String>),
     SearchAndReplace(SearchAndReplaceAction),
     #[default]
     NoOperation,
 }
 
 impl FieldAction {
-    pub fn transform(&self, content: String) -> String {
+    pub fn transform(&self, content: String) -> Option<String> {
         match self {
             FieldAction::Replace(replacement) => replacement.clone(),
             FieldAction::SearchAndReplace(search_and_replace) => {
-                search_and_replace.replace(content)
+                Some(search_and_replace.replace(content))
             }
-            FieldAction::NoOperation => content,
+            FieldAction::NoOperation => Some(content),
         }
     }
 }
@@ -141,7 +141,7 @@ pub struct MapAction {
 }
 
 impl MapAction {
-    pub fn transform<I>(&self, map: I) -> impl Iterator<Item = (String, String)>
+    pub fn transform<I>(&self, map: I) -> impl Iterator<Item = (String, Option<String>)>
     where
         I: Iterator<Item = (String, String)>,
     {
@@ -162,6 +162,7 @@ impl MapAction {
 enum FieldActionRaw {
     Replace(String),
     SearchAndReplace(SearchAndReplaceActionRaw),
+    Empty(()),
 }
 
 // Required because using serde(untagged) on FieldAction doesn't show the underlying error (e.g. SearchAndReplaceCaptureError)
@@ -170,10 +171,11 @@ impl TryFrom<FieldActionRaw> for FieldAction {
 
     fn try_from(raw: FieldActionRaw) -> Result<Self, Self::Error> {
         let action = match raw {
-            FieldActionRaw::Replace(replacement) => FieldAction::Replace(replacement),
+            FieldActionRaw::Replace(replacement) => FieldAction::Replace(Some(replacement)),
             FieldActionRaw::SearchAndReplace(replace_raw) => {
                 FieldAction::SearchAndReplace(replace_raw.try_into()?)
             }
+            FieldActionRaw::Empty(()) => FieldAction::Replace(None),
         };
         Ok(action)
     }

@@ -23,7 +23,7 @@ async fn test_recorder_multiple_http_proxies() {
     });
 
     let server_url = server.base_url();
-
+    println!("server_url: {}", server_url);
     // Create recorder
     let mut macaw = Macaw::<Recorder>::recorder();
 
@@ -71,7 +71,6 @@ async fn test_recorder_multiple_http_proxies() {
         r#".header.record_seed"# => "[record_seed]",
         r#".**.timestamp"# => "[timestamp]",
         r#".**.request_id"# => "[request_id]",
-        r#".**.uri"# => "[uri]",
         r#".**.headers.host"# => "[host]",
         r#".**.headers.date"# => "[date]",
     }, @r#"
@@ -88,7 +87,7 @@ async fn test_recorder_multiple_http_proxies() {
           "HttpRequest": {
             "request_id": "[request_id]",
             "method": "GET",
-            "uri": "[uri]",
+            "uri": "/test1",
             "version": "HTTP/1.1",
             "headers": {
               "accept": "*/*",
@@ -117,7 +116,7 @@ async fn test_recorder_multiple_http_proxies() {
           "HttpRequest": {
             "request_id": "[request_id]",
             "method": "GET",
-            "uri": "[uri]",
+            "uri": "/test2",
             "version": "HTTP/1.1",
             "headers": {
               "accept": "*/*",

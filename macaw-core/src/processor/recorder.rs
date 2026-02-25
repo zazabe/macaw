@@ -6,16 +6,33 @@ pub(crate) enum RecorderCommand {
 }
 
 #[derive(Debug)]
+pub struct RecorderOutcome {
+    pub recording_path: PathBuf,
+    pub total_events: usize,
+    pub total_bytes: Option<usize>,
+    pub total_time: Option<Duration>,
+}
+
+/// Options for the Recorder, including optional debug sink.
+#[derive(Debug, Default)]
+pub struct RecorderOptions {
+    /// When set, each recorded event is cloned and sent here before storing.
+    pub debug_tx: Option<mpsc::UnboundedSender<RecordedEvent>>,
+}
+
+#[derive(Debug)]
 pub struct Recorder {
     context: ActorContext,
     pub(crate) events: EventStore,
+    debug_tx: Option<mpsc::UnboundedSender<RecordedEvent>>,
 }
 
 impl Recorder {
-    pub(crate) fn new(context: ActorContext) -> Self {
+    pub(crate) fn new(context: ActorContext, options: RecorderOptions) -> Self {
         Self {
             context,
             events: EventStore::new(),
+            debug_tx: options.debug_tx,
         }
     }
 }
@@ -29,13 +46,20 @@ impl Actor for Recorder {
 }
 
 impl ActorHandler<RecorderCommand> for Recorder {
-    type Reply = ();
+    type Reply = RecorderOutcome;
 
-    async fn handle(&mut self, request: RecorderCommand) {
+    async fn handle(&mut self, request: RecorderCommand) -> RecorderOutcome {
         match request {
             RecorderCommand::WriteToFile(path) => {
-                if let Err(e) = self.events.save_file(path).await {
+                if let Err(e) = self.events.save_file(&path).await {
                     self.context.exit_with_error(e);
+                }
+                let total_bytes = path.metadata().ok().map(|m| m.len() as usize);
+                RecorderOutcome {
+                    recording_path: path,
+                    total_bytes,
+                    total_events: self.events.events_count(),
+                    total_time: self.events.duration(),
                 }
             }
         }
@@ -46,6 +70,12 @@ impl ActorHandler<RecordedEvent> for Recorder {
     type Reply = ();
 
     async fn handle(&mut self, message: RecordedEvent) {
+        if let Some(ref tx) = self.debug_tx {
+            let _ = tx.send(RecordedEvent {
+                proxy_id: message.proxy_id,
+                event: message.event.clone(),
+            });
+        }
         self.events.push(message.proxy_id, message.event);
     }
 }

@@ -30,6 +30,7 @@ pub(crate) mod lib {
     pub(crate) use std::pin::Pin;
     pub(crate) use std::str::FromStr;
     pub(crate) use std::sync::Arc;
+    pub(crate) use std::time::Duration;
     pub(crate) use thiserror::Error;
 
     pub(crate) use tokio::sync::{mpsc, watch};
