@@ -1,3 +1,5 @@
+use bytes::Bytes;
+use http::Request;
 use macaw_core::prelude::*;
 use macaw_http::prelude::*;
 
@@ -151,14 +153,19 @@ async fn test_recorder_http_transform() {
 
     let server = httpmock::MockServer::start_async().await;
 
-    // Set up mock endpoints
+    // Set up mock endpoints - use custom matcher to decompress gzip body and verify
     let mock = server.mock(|when, then| {
         when.method(httpmock::Method::POST)
             .path("/test")
             .header("x-signature", "sd20#Rfkm320QQ")
             .header("x-timestamp", "1765613418")
-            .body("TX(request1)");
-        then.status(200).body("RX(response1)");
+            .is_true(|req: &httpmock::HttpMockRequest| {
+                let http_req = Request::<Bytes>::from(req);
+                gzip_decompress(http_req.body())
+                    .map(|b| b == b"request1")
+                    .unwrap_or(false)
+            });
+        then.status(200).body(gzip_compress(b"response1"));
     });
 
     let server_url = server.base_url();
@@ -178,20 +185,25 @@ async fn test_recorder_http_transform() {
         .await
         .unwrap();
 
-    // Make HTTP request through the proxy using reqwest
+    // Make HTTP request through the proxy using reqwest (send gzip-compressed body)
     let client = reqwest::Client::new();
     let proxy_url = format!("http://{}/test", proxy_addr);
     let res = client
         .post(&proxy_url)
         .header("x-signature", "sd20#Rfkm320QQ")
         .header("x-timestamp", "1765613418")
-        .body("TX(request1)")
+        .body(gzip_compress(b"request1"))
         .send()
         .await
         .unwrap();
 
     assert_eq!(res.status(), 200);
-    assert_eq!(res.text().await.unwrap(), "RX(response1)");
+    let body = res.bytes().await.unwrap();
+    assert_eq!(
+        gzip_decompress(&body).unwrap(),
+        b"response1",
+        "response body should decompress to response1"
+    );
     mock.assert_calls(1);
 
     // Exit and save
@@ -226,7 +238,7 @@ async fn test_recorder_http_transform() {
             "version": "HTTP/1.1",
             "headers": {
               "accept": "*/*",
-              "content-length": "12",
+              "content-length": "28",
               "host": "[host]",
               "x-signature": "REDACTED",
               "x-timestamp": "TIMESTAMP"
@@ -242,7 +254,7 @@ async fn test_recorder_http_transform() {
             "status": 200,
             "version": "HTTP/1.1",
             "headers": {
-              "content-length": "13",
+              "content-length": "29",
               "date": "[date]"
             },
             "body": "response1"
