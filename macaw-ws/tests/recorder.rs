@@ -34,8 +34,8 @@ async fn test_recorder_multiple_ws_conns() -> Result<(), anyhow::Error> {
     server_handle.send_to(conn0, "msg1 for conn0")?;
     server_handle.send_to(conn1, "msg1 for conn1")?;
 
-    assert_eq!(client1.recv().await?, "msg1 for conn0");
-    assert_eq!(client2.recv().await?, "msg1 for conn1");
+    assert_eq!(client1.recv_text().await?, "msg1 for conn0");
+    assert_eq!(client2.recv_text().await?, "msg1 for conn1");
 
     client1.send("hello from client1").await?;
     assert_eq!(
@@ -43,13 +43,13 @@ async fn test_recorder_multiple_ws_conns() -> Result<(), anyhow::Error> {
         (conn0, "hello from client1")
     );
     server_handle.send_to(conn0, "echo: hello from client1")?;
-    assert_eq!(client1.recv().await?, "echo: hello from client1");
+    assert_eq!(client1.recv_text().await?, "echo: hello from client1");
 
     server_handle.send_to(conn0, "msg2 for conn0")?;
     server_handle.send_to(conn1, "msg2 for conn1")?;
 
-    assert_eq!(client1.recv().await?, "msg2 for conn0");
-    assert_eq!(client2.recv().await?, "msg2 for conn1");
+    assert_eq!(client1.recv_text().await?, "msg2 for conn0");
+    assert_eq!(client2.recv_text().await?, "msg2 for conn1");
 
     client2.send("hello from client2").await?;
     assert_eq!(
@@ -57,7 +57,7 @@ async fn test_recorder_multiple_ws_conns() -> Result<(), anyhow::Error> {
         (conn1, "hello from client2")
     );
     server_handle.send_to(conn1, "echo: hello from client2")?;
-    assert_eq!(client2.recv().await?, "echo: hello from client2");
+    assert_eq!(client2.recv_text().await?, "echo: hello from client2");
 
     client1.close().await?;
     server_handle.assert_disconnected(conn0).await?;
@@ -330,7 +330,7 @@ async fn test_recorder_multiple_ws_proxies() -> Result<(), anyhow::Error> {
         (conn0, "hello from proxy1")
     );
     server_handle.send_to(conn0, "echo: hello from proxy1")?;
-    assert_eq!(client1.recv().await?, "echo: hello from proxy1");
+    assert_eq!(client1.recv_text().await?, "echo: hello from proxy1");
     client1.close().await?;
     server_handle.assert_disconnected(conn0).await?;
 
@@ -344,7 +344,7 @@ async fn test_recorder_multiple_ws_proxies() -> Result<(), anyhow::Error> {
         (conn1, "hello from proxy2")
     );
     server_handle.send_to(conn1, "echo: hello from proxy2")?;
-    assert_eq!(client2.recv().await?, "echo: hello from proxy2");
+    assert_eq!(client2.recv_text().await?, "echo: hello from proxy2");
     client2.close().await?;
     server_handle.assert_disconnected(conn1).await?;
 
@@ -546,32 +546,39 @@ async fn test_recorder_ws_transform() -> Result<(), anyhow::Error> {
     let mut client = WsTestClient::connect(&proxy_url).await?;
     let conn_id = server_handle.recv_connect().await?;
 
-    // Send message with transform encoding
-    client.send(&encode_text("request1")).await?;
-    let server_message_decoded = decode_text(server_handle.recv_message().await?.as_str()?);
+    // Send message with transform encoding (gzip) - proxy decodes, processes, encodes, forwards to server
+    client
+        .send_bytes(&gzip_compress("request1".as_bytes()))
+        .await?;
+    let server_message_bytes = server_handle.recv_message().await?.as_bytes()?;
+    let server_message_decoded =
+        String::from_utf8(gzip_decompress(&server_message_bytes).unwrap()).unwrap();
 
-    server_handle.send_to(
+    // Server sends gzip-encoded - proxy decodes, processes, encodes, forwards to client
+    server_handle.send_bytes_to(
         conn_id,
-        &encode_text(&format!("echo:{}", server_message_decoded)),
+        &gzip_compress(format!("echo:{}", server_message_decoded).as_bytes()),
     )?;
-    let response = client.recv().await?;
+    let response = client.recv_bytes().await?;
 
     assert_eq!(server_message_decoded, "request1");
-    assert_eq!(response, encode_text("echo:request1"));
+    assert_decompressed_eq(&response, "echo:request1");
 
     // Send a message with secret text:
     client
-        .send(&encode_text("This is a secret message"))
+        .send_bytes(&gzip_compress("This is a secret message".as_bytes()))
         .await?;
-    let server_message_decoded = decode_text(server_handle.recv_message().await?.as_str()?);
-    server_handle.send_to(
+    let server_message_bytes = server_handle.recv_message().await?.as_bytes()?;
+    let server_message_decoded =
+        String::from_utf8(gzip_decompress(&server_message_bytes).unwrap()).unwrap();
+    server_handle.send_bytes_to(
         conn_id,
-        &encode_text(&format!("echo:{}", server_message_decoded)),
+        &gzip_compress(format!("echo:{}", server_message_decoded).as_bytes()),
     )?;
-    let response = client.recv().await?;
+    let response = client.recv_bytes().await?;
 
     assert_eq!(server_message_decoded, "This is a secret message");
-    assert_eq!(response, encode_text("echo:This is a secret message"));
+    assert_decompressed_eq(&response, "echo:This is a secret message");
 
     client.close().await?;
     server_handle.assert_disconnected(conn_id).await?;

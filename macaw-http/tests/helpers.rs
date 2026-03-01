@@ -1,5 +1,8 @@
+use flate2::Compression;
+use flate2::read::{GzDecoder, GzEncoder};
 use macaw_core::prelude::*;
 use macaw_http::prelude::*;
+use std::io::Read;
 
 #[derive(Clone)]
 pub struct TestHttpRedact;
@@ -16,15 +19,18 @@ impl HttpRedact for TestHttpRedact {
     }
 }
 
-fn text_wire_encode(prefix: &str, text: &str) -> String {
-    format!("{}({})", prefix, text)
+pub fn gzip_compress(data: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(data, Compression::fast());
+    let mut compressed = Vec::new();
+    encoder.read_to_end(&mut compressed).unwrap();
+    compressed
 }
 
-fn text_wire_decode(prefix: &str, text: &str) -> String {
-    regex::Regex::new(&format!("^{}\\((.+)\\)$", prefix))
-        .unwrap()
-        .replace(text, |caps: &regex::Captures| caps[1].to_string())
-        .to_string()
+pub fn gzip_decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    let mut decoder = GzDecoder::new(data);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed)?;
+    Ok(decompressed)
 }
 
 #[derive(Clone)]
@@ -35,9 +41,15 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut request: HttpRequestEvent,
     ) -> Result<HttpRequestEvent, anyhow::Error> {
-        let body = request.body.to_text().unwrap();
-        let encoded_body = text_wire_encode("TX", body.as_str());
-        request.body = Content::Text(PlainText::new(encoded_body));
+        let body = request.body.to_bytes();
+        if body.is_empty() {
+            return Ok(request);
+        }
+        let compressed = gzip_compress(&body);
+        request
+            .headers
+            .insert("content-length".to_string(), compressed.len().to_string());
+        request.body = Content::from_bytes(&compressed);
         Ok(request)
     }
 
@@ -45,9 +57,13 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut request: HttpRequestEvent,
     ) -> Result<HttpRequestEvent, anyhow::Error> {
-        let body = request.body.to_text().unwrap();
-        let decoded_body = text_wire_decode("TX", body.as_str());
-        request.body = Content::Text(PlainText::new(decoded_body));
+        let body = request.body.to_bytes();
+        if body.is_empty() {
+            return Ok(request);
+        }
+        let decompressed_bytes = gzip_decompress(&body)?;
+        let decompressed = String::from_utf8_lossy(&decompressed_bytes).to_string();
+        request.body = Content::Text(PlainText::new(decompressed));
         Ok(request)
     }
 
@@ -55,9 +71,15 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut response: HttpResponseEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let body = response.body.to_text().unwrap();
-        let encoded_body = text_wire_encode("RX", &body);
-        response.body = Content::Text(PlainText::new(encoded_body));
+        let body = response.body.to_bytes();
+        if body.is_empty() {
+            return Ok(response);
+        }
+        let compressed = gzip_compress(&body);
+        response
+            .headers
+            .insert("content-length".to_string(), compressed.len().to_string());
+        response.body = Content::from_bytes(&compressed);
         Ok(response)
     }
 
@@ -65,9 +87,13 @@ impl HttpTransform for TestHttpTransform {
         &self,
         mut response: HttpResponseEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let body = response.body.to_text().unwrap();
-        let decoded_body = text_wire_decode("RX", &body);
-        response.body = Content::Text(PlainText::new(decoded_body));
+        let body = response.body.to_bytes();
+        if body.is_empty() {
+            return Ok(response);
+        }
+        let decompressed_bytes = gzip_decompress(&body)?;
+        let decompressed = String::from_utf8_lossy(&decompressed_bytes).to_string();
+        response.body = Content::Text(PlainText::new(decompressed.to_string()));
         Ok(response)
     }
 }

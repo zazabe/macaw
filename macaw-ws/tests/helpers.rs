@@ -1,4 +1,7 @@
+use flate2::Compression;
+use flate2::read::{GzDecoder, GzEncoder};
 use macaw_ws::prelude::*;
+use std::io::Read;
 
 #[derive(Clone)]
 pub struct TestWsRedact;
@@ -21,16 +24,26 @@ impl WsRedact for TestWsRedact {
     }
 }
 
-pub(crate) fn encode_text(text: &str) -> String {
-    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, text.as_bytes())
+pub(crate) fn gzip_compress(data: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(data, Compression::fast());
+    let mut compressed = Vec::new();
+    encoder.read_to_end(&mut compressed).unwrap();
+    compressed
 }
 
-pub(crate) fn decode_text(text: &str) -> String {
-    String::from_utf8(
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, text.as_bytes())
-            .unwrap(),
-    )
-    .unwrap()
+pub(crate) fn gzip_decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    let mut decoder = GzDecoder::new(data);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed)?;
+    Ok(decompressed)
+}
+
+/// Asserts that decompressed `data` equals `expected` (as UTF-8 string).
+#[allow(dead_code)]
+pub(crate) fn assert_decompressed_eq(data: &[u8], expected: &str) {
+    let decompressed = gzip_decompress(data).expect("gzip decompress failed");
+    let text = String::from_utf8(decompressed).expect("invalid UTF-8");
+    assert_eq!(text, expected);
 }
 
 #[derive(Clone)]
@@ -42,8 +55,8 @@ impl WsTransform for TestWsTransform {
             WsEvent::Message(message_event) => {
                 let encoded_message = match message_event.message {
                     WsMessage::Text(text) => {
-                        let encoded_text = encode_text(&text);
-                        WsMessage::Text(encoded_text)
+                        let compressed = gzip_compress(text.as_bytes());
+                        WsMessage::Binary(compressed.into())
                     }
                     other => other,
                 };
@@ -57,9 +70,10 @@ impl WsTransform for TestWsTransform {
         match event {
             WsEvent::Message(message_event) => {
                 let decoded_message = match message_event.message {
-                    WsMessage::Text(text) => {
-                        let decoded_text = decode_text(&text);
-                        WsMessage::Text(decoded_text)
+                    WsMessage::Binary(data) => {
+                        let decompressed = gzip_decompress(&data)?;
+                        let text = String::from_utf8(decompressed)?;
+                        WsMessage::Text(text)
                     }
                     other => other,
                 };

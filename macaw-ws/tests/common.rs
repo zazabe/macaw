@@ -47,6 +47,16 @@ impl Connections {
         Ok(())
     }
 
+    /// Sends a binary message to a specific connection.
+    fn send_bytes_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<(), anyhow::Error> {
+        self.inner.with_connection(&conn_id, |conn| {
+            conn.client_tx
+                .send(Message::Binary(data.to_vec().into()))
+                .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))
+        })??;
+        Ok(())
+    }
+
     /// Broadcasts a message to all connections, removing failed ones.
     fn broadcast(&self, message: &str) -> Result<usize, anyhow::Error> {
         let mut sent_count = 0;
@@ -85,10 +95,18 @@ pub struct WsServerMessage {
 }
 
 impl WsServerMessage {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> Result<&str, anyhow::Error> {
         match &self.message {
             Message::Text(text) => Ok(text.as_str()),
             _ => Err(anyhow::anyhow!("Message is not a text message")),
+        }
+    }
+
+    pub fn as_bytes(&self) -> Result<Vec<u8>, anyhow::Error> {
+        match &self.message {
+            Message::Binary(data) => Ok(data.to_vec()),
+            _ => Err(anyhow::anyhow!("Message is not a binary message")),
         }
     }
 
@@ -123,6 +141,11 @@ impl TestServerHandle {
     /// Sends a message to a specific connection by ID.
     pub fn send_to(&self, conn_id: ConnectionId, message: &str) -> Result<(), anyhow::Error> {
         self.connections.send_to(conn_id, message)
+    }
+
+    /// Sends a binary message to a specific connection by ID.
+    pub fn send_bytes_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<(), anyhow::Error> {
+        self.connections.send_bytes_to(conn_id, data)
     }
 
     /// Waits for the next received text message event on the server.
@@ -326,7 +349,7 @@ pub async fn start_test_server() -> Result<(std::net::SocketAddr, TestServerHand
 /// A flexible WebSocket test client that uses channels for bidirectional communication.
 pub struct WsTestClient {
     send_tx: mpsc::UnboundedSender<Message>,
-    recv_rx: mpsc::UnboundedReceiver<String>,
+    recv_rx: mpsc::UnboundedReceiver<Message>,
     _handle: tokio::task::JoinHandle<()>,
 }
 
@@ -337,7 +360,7 @@ impl WsTestClient {
         let (mut write, mut read) = ws_stream.split();
 
         let (send_tx, mut send_rx) = mpsc::unbounded_channel::<Message>();
-        let (recv_tx, recv_rx) = mpsc::unbounded_channel::<String>();
+        let (recv_tx, recv_rx) = mpsc::unbounded_channel::<Message>();
         let barrier = Arc::new(tokio::sync::Barrier::new(4));
 
         // Spawn task to forward messages from channel to websocket
@@ -360,15 +383,16 @@ impl WsTestClient {
                 barrier.wait().await;
                 while let Some(msg) = read.next().await {
                     match msg {
-                        Ok(Message::Text(text)) => {
-                            let text = text.as_str().to_string();
-                            if recv_tx.send(text).is_err() {
-                                break;
+                        Ok(message) => match &message {
+                            Message::Text(..) | Message::Binary(..) => {
+                                if recv_tx.send(message).is_err() {
+                                    break;
+                                }
                             }
-                        }
-                        Ok(Message::Close(_)) => break,
+                            Message::Close(_) => break,
+                            _ => {}
+                        },
                         Err(_) => break,
-                        _ => {}
                     }
                 }
             }
@@ -402,14 +426,37 @@ impl WsTestClient {
         Ok(())
     }
 
-    /// Receives a text message from the server.
-    pub async fn recv(&mut self) -> Result<String, anyhow::Error> {
+    /// Sends a binary message to the server.
+    pub async fn send_bytes(&mut self, data: &[u8]) -> Result<(), anyhow::Error> {
+        self.send_tx
+            .send(Message::Binary(data.to_vec().into()))
+            .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
+        Ok(())
+    }
+
+    pub async fn recv(&mut self) -> Result<Message, anyhow::Error> {
         let message = self
             .recv_rx
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Connection closed"))?;
         Ok(message)
+    }
+
+    /// Receives a text message from the server.
+    pub async fn recv_text(&mut self) -> Result<String, anyhow::Error> {
+        match self.recv().await? {
+            Message::Text(text) => Ok(text.as_str().to_string()),
+            _ => Err(anyhow::anyhow!("Message is not a text message")),
+        }
+    }
+
+    /// Receives a binary message from the server.
+    pub async fn recv_bytes(&mut self) -> Result<Vec<u8>, anyhow::Error> {
+        match self.recv().await? {
+            Message::Binary(data) => Ok(data.to_vec()),
+            _ => Err(anyhow::anyhow!("Message is not a binary message")),
+        }
     }
 
     /// Closes the WebSocket connection.

@@ -58,17 +58,21 @@ async fn test_replayer_http_transform() {
 
     let client = reqwest::Client::new();
 
-    // Make request through proxy - this should match a redacted/transformed recorded request
+    // Make request through proxy - send gzip-compressed body, receive gzip-compressed response
     let proxy_url = format!("http://{}/test", proxy_addr);
     let res = client
         .post(&proxy_url)
         .header("x-signature", "sd20#Rfkm320QQ")
         .header("x-timestamp", "1765613418")
-        .body("TX(request1)")
+        .body(gzip_compress(b"request1"))
         .send()
         .await
         .unwrap();
     assert_eq!(res.status(), 200);
-    let body_str = res.text().await.unwrap();
-    assert_eq!(body_str, "RX(response1)");
+    let body = res.bytes().await.unwrap();
+    assert_eq!(
+        gzip_decompress(&body).unwrap(),
+        b"response1",
+        "response body should decompress to response1"
+    );
 }
