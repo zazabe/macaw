@@ -1,0 +1,24 @@
+{
+    "header": {
+        "record_id": "513143fa-9308-47d6-a73f-baf033341712",
+        "record_seed": "d6bc2a35-2523-44a8-b81d-9af755685c1e",
+        "timestamp": "2025-11-15T10:42:45.756836562Z"
+    },
+    "events": [
+        {
+            "proxy": "http_proxy1",
+            "timestamp": "2025-11-15T10:42:45.847408143Z",
+            "HttpRequest": {
+                "request_id": "8336d37e-6031-4617-b1a4-b2ed7f5d4a70",
+                "method": "GET",
+                "uri": "/test1",
+                "version": "HTTP/1.1",
+                "headers": {
+                    "accept": "*/*",
+                    "host": "127.0.0.1:43047"
+                },
+                "body": null
+            }
+        }
+    ]
+}

@@ -231,7 +231,7 @@ impl Content {
     }
 
     pub fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty)
+        ::std::matches!(self, Self::Empty)
     }
 }
 

@@ -7,16 +7,12 @@ use crate::lib::*;
 #[macro_export]
 macro_rules! test_path {
     () => {{
-        if cfg!(test) {
-            use macaw_core::prelude::test_path::get_cargo_workspace;
-            get_cargo_workspace(env!("CARGO_MANIFEST_DIR"))
-                .join(file!())
-                .parent()
-                .unwrap()
-                .to_path_buf()
-        } else {
-            panic!("test_path!() can only be used in test mode");
-        }
+        use macaw_core::prelude::test_path::get_cargo_workspace;
+        get_cargo_workspace(env!("CARGO_MANIFEST_DIR"))
+            .join(file!())
+            .parent()
+            .unwrap()
+            .to_path_buf()
     }};
 }
 

@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use http::Request;
+use insta::assert_json_snapshot;
 use macaw_core::prelude::*;
 use macaw_http::prelude::*;
 
@@ -263,4 +264,201 @@ async fn test_recorder_http_transform() {
       ]
     }
     "#);
+}
+
+#[tokio::test]
+async fn test_recorder_upstream_disconnect_before_response() {
+    let temp_file = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+    let test_file = temp_file.path().to_path_buf();
+
+    let (server_addr, _handle) = spawn_tcp_disconnect_server().await;
+    let server_url = format!("http://{}/", server_addr);
+
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let proxy_addr = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &server_url,
+            HttpProxyOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    let proxy_url = format!("http://{}/", proxy_addr);
+    let response = client.get(&proxy_url).send().await.unwrap();
+
+    assert_eq!(response.status(), 500);
+    let body = response.bytes().await.unwrap();
+    let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
+    assert_json_snapshot!(json, {
+        r#".request_id"# => "[request_id]",
+    }, @r#"
+    {
+      "error": "Transport error: client error (SendRequest): connection closed before message completed",
+      "request_id": "[request_id]"
+    }
+    "#);
+
+    macaw.exit_handle().exit();
+    macaw.record_when_exit(&test_file).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_recorder_upstream_partial_response() {
+    let temp_file = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+    let test_file = temp_file.path().to_path_buf();
+
+    let (server_addr, _handle) = spawn_tcp_partial_response_server().await;
+    let server_url = format!("http://{}/", server_addr);
+
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let proxy_addr = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &server_url,
+            HttpProxyOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    let proxy_url = format!("http://{}/test", proxy_addr);
+    let response = client.get(&proxy_url).send().await.unwrap();
+
+    assert_eq!(response.status(), 500);
+    let body = response.bytes().await.unwrap();
+    let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
+    assert_json_snapshot!(json, {
+        r#".request_id"# => "[request_id]",
+    }, @r#"
+    {
+      "error": "Transport error: error reading a body from connection: end of file before message length reached",
+      "request_id": "[request_id]"
+    }
+    "#);
+
+    macaw.exit_handle().exit();
+    macaw.record_when_exit(&test_file).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_recorder_client_disconnect_before_complete() {
+    let temp_file = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+    let test_file = temp_file.path().to_path_buf();
+
+    let server = httpmock::MockServer::start_async().await;
+    let _mock = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/test");
+        then.status(200).body("ok");
+    });
+    let server_url = server.base_url();
+
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let proxy_addr = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &server_url,
+            HttpProxyOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let stream = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+    drop(stream);
+
+    macaw.exit_handle().exit();
+    macaw.record_when_exit(&test_file).await.unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(test_file).unwrap().as_str()).unwrap();
+    assert_json_snapshot!(json, {
+        r#".header.record_id"# => "[record_id]",
+        r#".header.record_seed"# => "[record_seed]",
+        r#".header.timestamp"# => "[timestamp]",
+    }, @r#"
+    {
+      "events": [],
+      "header": {
+        "record_id": "[record_id]",
+        "record_seed": "[record_seed]",
+        "timestamp": "[timestamp]"
+      }
+    }
+    "#);
+}
+
+#[tokio::test]
+async fn test_recorder_upstream_not_reachable() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let unreachable_url = format!("http://127.0.0.1:{}/", port);
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let result = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &unreachable_url,
+            HttpProxyOptions::default(),
+        )
+        .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("tcp connect error"),
+        "result should contain 'tcp connect error', got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_recorder_upstream_schema_not_supported_error() {
+    let (addr, _handle) = spawn_tls_server_with_self_signed_cert().await;
+    let server_url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let result = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &server_url,
+            HttpProxyOptions::default(),
+        )
+        .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("unsupported scheme ws"),
+        "result should contain 'unsupported scheme ws', got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_recorder_upstream_tls_error() {
+    let (addr, _handle) = spawn_tls_server_with_self_signed_cert().await;
+    let server_url = format!("https://127.0.0.1:{}/", addr.port());
+
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let result = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &server_url,
+            HttpProxyOptions::default(),
+        )
+        .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("invalid peer certificate: UnknownIssuer"),
+        "result should contain 'invalid peer certificate: UnknownIssuer', got: {}",
+        err
+    );
 }

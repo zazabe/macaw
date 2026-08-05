@@ -92,6 +92,16 @@ impl RecordEvent for HttpRequestEvent {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum HttpResponseError {
+    #[error("Transport error: {0:#}")]
+    TransportError(#[source] anyhow::Error),
+    #[error("Macaw processing error: {0:#}")]
+    MacawProcessingError(#[source] anyhow::Error),
+    #[error("Internal error: {0:#}")]
+    InternalError(#[source] anyhow::Error),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpResponseEvent {
     pub request_id: Uuid,
@@ -104,7 +114,42 @@ pub struct HttpResponseEvent {
 }
 
 impl HttpResponseEvent {
-    pub fn from_response(res: &HttpResponse, request_id: Uuid) -> Result<Self, anyhow::Error> {
+    pub(crate) fn from_transport_error(error: anyhow::Error, request_id: Uuid) -> Self {
+        Self::from_error(HttpResponseError::TransportError(error), request_id)
+    }
+
+    pub(crate) fn from_macaw_processing_error(error: anyhow::Error, request_id: Uuid) -> Self {
+        Self::from_error(HttpResponseError::MacawProcessingError(error), request_id)
+    }
+
+    pub(crate) fn from_internal_error(error: anyhow::Error, request_id: Uuid) -> Self {
+        Self::from_error(HttpResponseError::InternalError(error), request_id)
+    }
+
+    pub(crate) fn from_error(error: HttpResponseError, request_id: Uuid) -> Self {
+        Self {
+            request_id,
+            status: http::StatusCode::INTERNAL_SERVER_ERROR,
+            version: http::Version::HTTP_11,
+            headers: [("content-type".to_string(), "application/json".to_string())]
+                .into_iter()
+                .collect(),
+            body: Content::Text(PlainText::new(
+                serde_json::to_string(&serde_json::json! {
+                    {
+                        "error": error.to_string(),
+                        "request_id": request_id.to_string(),
+                    }
+                })
+                .unwrap(),
+            )),
+        }
+    }
+
+    pub(crate) fn from_response(
+        res: &HttpResponse,
+        request_id: Uuid,
+    ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             request_id,
             status: res.status(),
@@ -138,7 +183,7 @@ fn body_preview(body: &Content) -> String {
         Content::Text(t) => {
             let s = to_single_line(t.as_str());
             if s.len() > 1000 {
-                format!("{}...", &s[..997])
+                format!("{}...", &s[..997]).to_string()
             } else {
                 s
             }

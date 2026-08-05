@@ -24,16 +24,17 @@ impl ProxyActor for HttpProxyRecorderActor {
 }
 
 impl HttpProxyRecorderActor {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: ActorContext,
         proxy_id: ProxyId,
         addr: SocketAddr,
         target_url: TargetUrl,
         recorder: ActorHandle<Recorder>,
+        http_client: HttpClient,
         sender: Box<dyn HttpServerRequestResolver>,
         options: HttpProxyOptions,
     ) -> Result<Self, anyhow::Error> {
-        let upstream = HttpClient::new()?;
         let downstream = HttpServer::new(addr, sender);
 
         Ok(Self {
@@ -41,7 +42,7 @@ impl HttpProxyRecorderActor {
             proxy_id,
             target_url,
             recorder,
-            upstream,
+            upstream: http_client,
             downstream,
             options,
         })
@@ -51,31 +52,41 @@ impl HttpProxyRecorderActor {
         self.downstream.start(self.context()).await
     }
 
-    async fn send_request(
+    async fn send_request(&self, request: HttpRequestEvent) -> HttpResponseEvent {
+        let request_id = request.request_id;
+        self.send_request_with_error(request)
+            .await
+            .unwrap_or_else(|error| HttpResponseEvent::from_transport_error(error, request_id))
+    }
+
+    async fn send_request_with_error(
         &self,
         mut request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
         request.uri = self.target_url.apply(&request.uri)?;
+        request.headers.insert(
+            http::header::HOST.to_string(),
+            self.target_url.authority.to_string(),
+        );
         let request_id = request.request_id;
         let req = request.to_request()?;
         let res = self.upstream.request(req).await?;
-        let response = HttpResponseEvent::from_response(&res, request_id)?;
-        Ok(response)
+        HttpResponseEvent::from_response(&res, request_id)
     }
 
     fn record<E: RecordEvent>(&self, event: E) -> Result<(), anyhow::Error> {
         self.recorder.send(RecordedEvent::new(self.proxy_id, event))
     }
-}
 
-impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
-    type Reply = Result<HttpResponseEvent, anyhow::Error>;
-
-    async fn handle(
-        &mut self,
+    async fn process_request(
+        &self,
         request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
-        let request_decoded = self.options.transform.decode_request(request.clone())?;
+        let request_decoded = self
+            .options
+            .transform
+            .decode_request(request.clone())
+            .context("Failed to decode request")?;
         let request_overridden = self
             .options
             .overrides
@@ -83,7 +94,8 @@ impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
         let request_encoded = self
             .options
             .transform
-            .encode_request(request_overridden.clone())?;
+            .encode_request(request_overridden.clone())
+            .context("Failed to encode request")?;
         let response_future = self.send_request(request_encoded);
 
         let request_redacted = self
@@ -91,23 +103,41 @@ impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
             .redact
             .http_redact_request(request_overridden.clone());
 
-        self.record(request_redacted)?;
+        self.record(request_redacted)
+            .context("Failed to record request")?;
 
-        let response = response_future.await?;
+        let response = response_future.await;
 
-        let response_decoded = self.options.transform.decode_response(response)?;
+        let response_decoded = self
+            .options
+            .transform
+            .decode_response(response)
+            .context("Failed to decode response")?;
         let response_overridden = self
             .options
             .overrides
             .http_override_response(response_decoded, request_overridden);
 
-        self.record(response_overridden.clone())?;
+        self.record(response_overridden.clone())
+            .context("Failed to record response")?;
 
         let encoded_response = self
             .options
             .transform
-            .encode_response(response_overridden)?;
+            .encode_response(response_overridden)
+            .context("Failed to encode response")?;
         Ok(encoded_response)
+    }
+}
+
+impl ActorHandler<HttpRequestEvent> for HttpProxyRecorderActor {
+    type Reply = HttpResponseEvent;
+
+    async fn handle(&mut self, request: HttpRequestEvent) -> HttpResponseEvent {
+        let request_id = request.request_id;
+        self.process_request(request).await.unwrap_or_else(|error| {
+            HttpResponseEvent::from_macaw_processing_error(error, request_id)
+        })
     }
 }
 
@@ -141,10 +171,11 @@ impl MacawHttpRecorderSetup for Macaw<Recorder> {
         target_url: &str,
         options: HttpProxyOptions,
     ) -> Result<SocketAddr, anyhow::Error> {
+        let target_url: TargetUrl = target_url.parse()?;
+        let http_client = HttpClient::new(target_url.uri()).await?;
         let (_proxy_id, handle) = self.add_proxy(move |recorder, actor_context| {
             let proxy_id: ProxyId = proxy_id.parse()?;
             let addr: SocketAddr = addr.parse()?;
-            let target_url: TargetUrl = target_url.parse()?;
             let (tx, rx) = actor_channel::<HttpProxyRecorderActor>();
             let sender = Box::new(tx.clone());
             let context = actor_context.create_child(&proxy_id.to_string());
@@ -154,6 +185,7 @@ impl MacawHttpRecorderSetup for Macaw<Recorder> {
                 addr,
                 target_url,
                 recorder.clone(),
+                http_client,
                 sender,
                 options,
             )?;

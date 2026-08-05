@@ -1,0 +1,8 @@
+---
+source: macaw-http/tests/recorder.rs
+expression: json
+---
+{
+  "error": "[error]",
+  "request_id": "[request_id]"
+}

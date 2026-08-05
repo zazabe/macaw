@@ -10,6 +10,12 @@ pub struct RecordFile {
     pub(crate) events: Vec<Event<Box<dyn RecordEvent>>>,
 }
 
+impl RecordFile {
+    pub fn events_count(&self) -> usize {
+        self.events.len()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct EventStore {
     header: RecordHeader,
