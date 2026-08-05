@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use macaw_core::prelude::*;
 use macaw_core::test_path;
 use macaw_http::prelude::*;
@@ -75,4 +77,52 @@ async fn test_replayer_http_transform() {
         b"response1",
         "response body should decompress to response1"
     );
+}
+
+#[tokio::test]
+async fn test_replayer_disconnect_before_response() {
+    let recording_path =
+        test_path!().join("./data/replayer-test_replayer_disconnect_before_response.json");
+    let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
+
+    let proxy_addr = macaw
+        .add_http_proxy("http_proxy1", "127.0.0.1:0", HttpProxyOptions::default())
+        .await
+        .unwrap();
+
+    macaw.play().unwrap();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+
+    let proxy_url = format!("http://{}/test1", proxy_addr);
+    let res = client.get(&proxy_url).send().await;
+
+    assert!(res.is_err() || res.unwrap().status().is_server_error());
+}
+
+#[tokio::test]
+async fn test_replayer_no_matching_request() {
+    let recording_path =
+        test_path!().join("./data/replayer-test_replayer_multiple_http_proxies.json");
+    let mut macaw = Macaw::<Replayer>::replayer(recording_path).unwrap();
+
+    let proxy_addr = macaw
+        .add_http_proxy("http_proxy1", "127.0.0.1:0", HttpProxyOptions::default())
+        .await
+        .unwrap();
+
+    macaw.play().unwrap();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+
+    let proxy_url = format!("http://{}/other", proxy_addr);
+    let res = client.get(&proxy_url).send().await;
+
+    assert!(res.is_err() || res.unwrap().status().is_server_error());
 }

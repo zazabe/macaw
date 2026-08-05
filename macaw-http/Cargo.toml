@@ -14,12 +14,14 @@ path = "src/lib.rs"
 [dependencies]
 macaw-core = { path = "../macaw-core" }
 anyhow.workspace = true
+thiserror.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 fs-err.workspace = true
 dyn-clonable.workspace = true
 http.workspace = true
 http-body-util.workspace = true
+tower-service.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 hyper-rustls.workspace = true
@@ -44,3 +46,5 @@ httpmock.workspace = true
 reqwest.workspace = true
 regex.workspace = true
 flate2.workspace = true
+tokio-rustls.workspace = true
+rcgen.workspace = true

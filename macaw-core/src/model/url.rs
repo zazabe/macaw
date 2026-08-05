@@ -8,6 +8,15 @@ pub struct TargetUrl {
 }
 
 impl TargetUrl {
+    pub fn uri(&self) -> http::Uri {
+        http::uri::Builder::new()
+            .scheme(self.scheme.clone())
+            .authority(self.authority.clone())
+            .path_and_query(self.path_and_query.clone())
+            .build()
+            .unwrap()
+    }
+
     pub fn apply(&self, binding: &http::Uri) -> Result<http::Uri, anyhow::Error> {
         let mut builder = http::uri::Builder::from(binding.clone())
             .scheme(self.scheme.clone())

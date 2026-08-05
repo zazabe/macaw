@@ -22,7 +22,11 @@ impl HttpServerRequestResolver for ActorChannelSender<HttpProxyRecorderActor> {
     ) -> Pin<Box<dyn Future<Output = Result<HttpResponse, anyhow::Error>> + Send + 'a>> {
         Box::pin(async move {
             let request_event = HttpRequestEvent::from_request(&request)?;
-            let response_event = self.request(request_event).await??;
+            let request_id = request_event.request_id;
+            let response_event = self
+                .request(request_event)
+                .await
+                .unwrap_or_else(|error| HttpResponseEvent::from_internal_error(error, request_id));
             let response = response_event.to_response()?;
             Ok(response)
         })
