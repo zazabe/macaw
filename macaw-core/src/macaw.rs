@@ -8,7 +8,10 @@ pub trait ProxyActor: Actor {
 
 #[derive(Debug)]
 pub struct Macaw<P: Processor> {
+    /// Lifecycle observed by callers. It is deliberately separate from the actor
+    /// system so a graceful stop can drain proxies before stopping the processor.
     context: AppContext,
+    actors: AppContext,
     processor: ActorHandle<P>,
     proxies: ProxyHandles,
 }
@@ -18,8 +21,29 @@ impl<P: Processor> Macaw<P> {
         self.context.exit_handle()
     }
 
-    pub async fn wait_until_stopped(self) -> Result<(), AppError> {
-        self.context.wait_until_exit().await
+    async fn wait_for_stop_request(
+        context: AppContext,
+        actors: AppContext,
+    ) -> Result<(), AppError> {
+        tokio::select! {
+            result = context.wait_until_exit() => result,
+            result = actors.wait_until_exit() => result,
+        }
+    }
+
+    /// Stop all runtime actors without waiting for an application exit request.
+    /// This is primarily used to roll back partially completed startup.
+    pub async fn shutdown(self) -> Result<(), AppError> {
+        let Self {
+            context: _,
+            actors: _,
+            processor,
+            mut proxies,
+        } = self;
+        proxies.stop_and_wait().await?;
+        processor.stop();
+        processor.wait().await?;
+        Ok(())
     }
 }
 
@@ -30,11 +54,13 @@ impl Macaw<Recorder> {
 
     pub fn recorder_with_options(options: RecorderOptions) -> Self {
         let context = AppContext::new();
-        let actor_context = context.actor_context("recorder");
+        let actors = AppContext::new();
+        let actor_context = actors.actor_context("recorder");
         let processor = Recorder::new(actor_context, options);
         let handle = processor.run();
         Self {
             context,
+            actors,
             processor: handle,
             proxies: ProxyHandles::new(),
         }
@@ -44,11 +70,32 @@ impl Macaw<Recorder> {
         self,
         path: P,
     ) -> Result<RecorderOutcome, AppError> {
-        self.context.wait_until_exit().await?;
-        let stats = self
-            .processor
+        let Self {
+            context,
+            actors,
+            processor,
+            mut proxies,
+        } = self;
+        let stop_result = Self::wait_for_stop_request(context, actors).await;
+
+        // Stop listeners first. Once their actor mailboxes are closed, every
+        // previously accepted event has either reached the recorder mailbox or
+        // can no longer be produced.
+        proxies.stop_and_wait().await?;
+
+        if let Err(error) = stop_result {
+            processor.stop();
+            processor.wait().await?;
+            return Err(error);
+        }
+
+        // Actor mailboxes are FIFO, so this request is handled after all events
+        // already sent by the stopped proxies. This is the recording drain point.
+        let stats = processor
             .request(RecorderCommand::WriteToFile(path.as_ref().to_path_buf()))
-            .await?;
+            .await??;
+        processor.stop();
+        processor.wait().await?;
         Ok(stats)
     }
 
@@ -77,11 +124,13 @@ impl Macaw<Replayer> {
         options: ReplayerOptions,
     ) -> Result<Self, anyhow::Error> {
         let context = AppContext::new();
-        let actor_context = context.actor_context("replayer");
+        let actors = AppContext::new();
+        let actor_context = actors.actor_context("replayer");
         let processor = Replayer::new(actor_context, path, options)?;
         let handle = processor.run();
         Ok(Self {
             context,
+            actors,
             processor: handle,
             proxies: ProxyHandles::new(),
         })
@@ -89,6 +138,20 @@ impl Macaw<Replayer> {
 
     pub fn play(&self) -> Result<(), anyhow::Error> {
         self.processor.send(ReplayerCommand::Play)
+    }
+
+    pub async fn wait_until_stopped(self) -> Result<(), AppError> {
+        let Self {
+            context,
+            actors,
+            processor,
+            mut proxies,
+        } = self;
+        let stop_result = Self::wait_for_stop_request(context, actors).await;
+        proxies.stop_and_wait().await?;
+        processor.stop();
+        processor.wait().await?;
+        stop_result
     }
 
     pub async fn add_proxy<A, F>(
@@ -125,6 +188,22 @@ impl ProxyHandles {
 
     fn insert<H: ErasedActorHandle + 'static>(&mut self, proxy_id: ProxyId, handle: H) {
         self.0.insert(proxy_id, Box::new(handle));
+    }
+
+    async fn stop_and_wait(&mut self) -> Result<(), anyhow::Error> {
+        for handle in self.0.values() {
+            handle.stop();
+        }
+        let completions = self
+            .0
+            .values()
+            .map(|handle| handle.completion())
+            .collect::<Vec<_>>();
+        for completion in completions {
+            completion.wait().await?;
+        }
+        self.0.clear();
+        Ok(())
     }
 }
 

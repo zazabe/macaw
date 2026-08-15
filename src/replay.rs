@@ -1,9 +1,11 @@
 //! Replay command - load recording and replay through proxies.
 
-use anyhow::{Context, Result};
-use macaw::core::*;
-use std::collections::HashMap;
+use anyhow::Result;
+use futures::StreamExt;
+use macaw::session::SessionManager;
 use std::path::Path;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio_stream::wrappers::SignalStream;
 
 use crate::config::Config;
 use crate::debug;
@@ -20,21 +22,39 @@ pub async fn run(config_path: &Path, recording_path: &Path, debug_mode: bool) ->
     } else {
         None
     };
-    let options = ReplayerOptions { debug_tx };
-
-    let mut macaw = Macaw::<Replayer>::replayer_with_options(recording_path, options)?;
-    let mut bindings = HashMap::new();
-    for (proxy_id, proxy_config) in config.proxies.iter() {
-        let socket = proxy_config
-            .bind_to_replayer(proxy_id, &mut macaw)
-            .await
-            .context("Failed to bind proxy to recorder")?;
-        bindings.insert(proxy_id.clone(), socket);
-    }
-
+    let manager = SessionManager::start();
+    let snapshot = manager
+        .replay(recording_path, config.session_config(debug_tx))
+        .await?;
+    let bindings = snapshot.endpoints.clone().into_iter().collect();
     debug::print_replay_summary(&config.proxies, &bindings);
 
-    macaw.play()?;
-    macaw.wait_until_stopped().await?;
+    let mut sig_int = SignalStream::new(signal(SignalKind::interrupt())?);
+    let mut sig_term = SignalStream::new(signal(SignalKind::terminate())?);
+    let mut sig_quit = SignalStream::new(signal(SignalKind::quit())?);
+    let final_snapshot = loop {
+        tokio::select! {
+            _ = sig_int.next() => {
+                break manager.stop_session(snapshot.id).await?;
+            }
+            _ = sig_term.next() => {
+                break manager.stop_session(snapshot.id).await?;
+            }
+            _ = sig_quit.next() => {
+                break manager.stop_session(snapshot.id).await?;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
+                let current = manager.get(snapshot.id).await?;
+                if current.state.is_terminal() {
+                    break current;
+                }
+            }
+        }
+    };
+    let final_error = final_snapshot.error;
+    manager.shutdown().await?;
+    if let Some(error) = final_error {
+        return Err(error.into());
+    }
     Ok(())
 }

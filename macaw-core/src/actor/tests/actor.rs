@@ -222,6 +222,77 @@ async fn test_actor_request_error_actor_stopped() {
 }
 
 #[tokio::test]
+async fn test_exit_is_latched_before_actor_waits() {
+    let app_context = AppContext::new();
+    let actor_context = app_context.actor_context("latched");
+    app_context.exit();
+
+    let handle = TestActor::new(actor_context).run();
+    handle.wait().await.unwrap();
+
+    let result = app_context.wait_until_exit().await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_repeated_exit_keeps_first_result() {
+    let app_context = AppContext::new();
+    let exit = app_context.exit_handle();
+    exit.exit_with_error(anyhow::anyhow!("first"));
+    exit.exit();
+    exit.exit_with_error(anyhow::anyhow!("last"));
+
+    match app_context.wait_until_exit().await.unwrap_err() {
+        AppError::ExitWithError(error) => assert_eq!(error.to_string(), "first"),
+        error => panic!("unexpected error: {error}"),
+    }
+}
+
+#[tokio::test]
+async fn test_actor_completion_has_multiple_waiters() {
+    let app_context = AppContext::new();
+    let handle = TestActor::new(app_context.actor_context("completion")).run();
+    let first = handle.completion();
+    let second = handle.completion();
+    handle.stop();
+
+    let (first, second) = tokio::join!(first.wait(), second.wait());
+    first.unwrap();
+    second.unwrap();
+}
+
+#[tokio::test]
+async fn test_stopping_one_actor_does_not_stop_sibling() {
+    let app_context = AppContext::new();
+    let first = TestActor::new(app_context.actor_context("first")).run();
+    let second = TestActor::new(app_context.actor_context("second")).run();
+
+    first.stop();
+    first.wait().await.unwrap();
+
+    assert_eq!(second.request(TestRequest { value: 4 }).await.unwrap(), 8);
+    second.stop();
+    second.wait().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_cancelled_request_does_not_stop_actor() {
+    let app_context = AppContext::new();
+    let handle = TestActor::new(app_context.actor_context("cancelled-request")).run();
+    let requester = {
+        let handle = handle.clone();
+        tokio::spawn(async move { handle.request(SlowRequest).await })
+    };
+    tokio::task::yield_now().await;
+    requester.abort();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    assert_eq!(handle.request(TestRequest { value: 3 }).await.unwrap(), 6);
+    handle.stop();
+    handle.wait().await.unwrap();
+}
+
+#[tokio::test]
 async fn test_actor_stopped_due_to_channel_closed() {
     let app_context = AppContext::new();
     let actor_context = app_context.actor_context("test_actor");
@@ -273,6 +344,9 @@ impl TestMessage {
 struct TestRequest {
     value: u32,
 }
+
+#[derive(Debug)]
+struct SlowRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TestActorStateInner {
@@ -387,5 +461,13 @@ impl ActorHandler<TestRequest> for TestActor {
 
     async fn handle(&mut self, message: TestRequest) -> u32 {
         message.value * 2
+    }
+}
+
+impl ActorHandler<SlowRequest> for TestActor {
+    type Reply = ();
+
+    async fn handle(&mut self, _message: SlowRequest) {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }

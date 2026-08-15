@@ -46,21 +46,19 @@ impl Actor for Recorder {
 }
 
 impl ActorHandler<RecorderCommand> for Recorder {
-    type Reply = RecorderOutcome;
+    type Reply = Result<RecorderOutcome, anyhow::Error>;
 
-    async fn handle(&mut self, request: RecorderCommand) -> RecorderOutcome {
+    async fn handle(&mut self, request: RecorderCommand) -> Self::Reply {
         match request {
             RecorderCommand::WriteToFile(path) => {
-                if let Err(e) = self.events.save_file(&path).await {
-                    self.context.exit_with_error(e);
-                }
+                self.events.save_file(&path).await?;
                 let total_bytes = path.metadata().ok().map(|m| m.len() as usize);
-                RecorderOutcome {
+                Ok(RecorderOutcome {
                     recording_path: path,
                     total_bytes,
                     total_events: self.events.events_count(),
                     total_time: self.events.duration(),
-                }
+                })
             }
         }
     }

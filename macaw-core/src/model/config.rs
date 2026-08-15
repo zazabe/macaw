@@ -2,11 +2,12 @@ use std::net::SocketAddr;
 
 use crate::lib::*;
 
+#[dyn_clonable::clonable]
 #[typetag::serde(tag = "type")]
-pub trait ProxyConfig {
+pub trait ProxyConfig: Clone + Send + Sync {
     fn bind(&self) -> &str;
 
-    fn target(&self) -> &str;
+    fn target(&self) -> Option<&str>;
 
     fn overrides(&self) -> Option<&str>;
 
@@ -16,13 +17,13 @@ pub trait ProxyConfig {
         &'a self,
         proxy_id: &'b str,
         macaw: &'b mut Macaw<Recorder>,
-    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + 'b>>;
+    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + Send + 'b>>;
 
     fn bind_to_replayer<'b, 'a: 'b>(
         &'a self,
         proxy_id: &'b str,
         macaw: &'b mut Macaw<Replayer>,
-    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + 'b>>;
+    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + Send + 'b>>;
 }
 
 impl fmt::Debug for Box<dyn ProxyConfig> {

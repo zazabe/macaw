@@ -69,13 +69,15 @@ rcgen = "0.14"
 
 [package]
 name = "macaw"
-version.workspace = true
-authors.workspace = true
-edition.workspace = true
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
 
 [features]
-default = []
-wasm = [ "dep:macaw-wasm" ]
+default = [ "http", "ws" ]
+http = [ "dep:macaw-http" ]
+ws = [ "dep:macaw-ws" ]
+wasm = [ "http", "dep:macaw-wasm" ]
 
 [lib]
 name = "macaw"
@@ -84,10 +86,12 @@ path = "lib/lib.rs"
 [[example]]
 name = "recorder"
 path = "examples/recorder.rs"
+required-features = [ "http", "ws" ]
 
 [[example]]
 name = "replayer"
 path = "examples/replayer.rs"
+required-features = [ "http", "ws" ]
 
 [[example]]
 name = "wasm"
@@ -100,25 +104,30 @@ path = "src/main.rs"
 
 [dependencies]
 macaw-core = { path = "macaw-core" }
-macaw-http = { path = "macaw-http" }
-macaw-ws = { path = "macaw-ws" }
+macaw-http = { path = "macaw-http", optional = true }
+macaw-ws = { path = "macaw-ws", optional = true }
 macaw-wasm = { path = "macaw-wasm", optional = true }
 anyhow = "*"
+thiserror = { workspace = true }
+uuid = { workspace = true }
 clap = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }
-serde_json.workspace = true
-bytes.workspace = true
-http-body-util.workspace = true
-hyper.workspace = true
-hyper-util.workspace = true
+serde_json = { workspace = true }
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 colored = { workspace = true }
 terminal_size = { workspace = true }
-futures.workspace = true
-tracing.workspace = true
-tokio.workspace = true
+futures = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
 tracing-subscriber = { version = "*", features = [ "env-filter" ] }
 console-subscriber = "0.5"
 tokio-stream = { version = "*", features = [ "full" ] }
 signal = "0.7"
 bytesize = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

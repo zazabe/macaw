@@ -107,7 +107,7 @@ pub fn print_record_summary(proxies: &ProxyMap, bindings: &HashMap<String, Socke
     }
     for (proxy_id, config) in proxies.iter() {
         let proxy_display = format_proxy_id(proxy_id.as_str(), proxy_width);
-        let target_str = config.target();
+        let target_str = config.target().unwrap_or("");
         let bind_str = bindings
             .get(proxy_id)
             .map(|s| s.to_string())
@@ -120,12 +120,7 @@ pub fn print_record_summary(proxies: &ProxyMap, bindings: &HashMap<String, Socke
                 target_str.bold()
             );
         } else {
-            println!(
-                "{:<14} {:<12}  →  {}",
-                proxy_display,
-                config.bind(),
-                target_str
-            );
+            println!("{:<14} {:<12}  →  {}", proxy_display, bind_str, target_str);
         }
     }
     println!();
@@ -173,7 +168,7 @@ pub fn print_replay_summary(proxies: &ProxyMap, bindings: &HashMap<String, Socke
     }
     for (proxy_id, config) in proxies.iter() {
         let proxy_display = format_proxy_id(proxy_id.as_str(), proxy_width);
-        let target_str = format!("({})", config.target());
+        let target_str = format!("({})", config.target().unwrap_or(""));
         let bind_str = bindings
             .get(proxy_id)
             .map(|s| s.to_string())

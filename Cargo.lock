@@ -1901,12 +1901,15 @@ dependencies = [
  "serde",
  "serde_json",
  "signal",
+ "tempfile",
  "terminal_size",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -1989,14 +1992,17 @@ name = "macaw-wasm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dyn-clonable",
  "http",
  "httpmock",
  "macaw-core",
  "macaw-http",
  "reqwest",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "typetag",
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
