@@ -107,8 +107,11 @@ impl Default for Box<dyn HttpOverride> {
 /// Use case: redact nondeterministic parts, remove sensitive data, etc...
 #[dyn_clonable::clonable]
 pub trait HttpRedact: Clone + Send + Sync {
-    fn http_redact_request(&self, request: HttpRequestEvent) -> HttpRequestEvent {
-        request
+    fn http_redact_request(
+        &self,
+        request: HttpRequestEvent,
+    ) -> Result<HttpRequestEvent, anyhow::Error> {
+        Ok(request)
     }
 }
 
@@ -123,8 +126,11 @@ impl fmt::Debug for Box<dyn HttpRedact> {
 pub struct NoopHttpRedact;
 
 impl HttpRedact for NoopHttpRedact {
-    fn http_redact_request(&self, request: HttpRequestEvent) -> HttpRequestEvent {
-        request
+    fn http_redact_request(
+        &self,
+        request: HttpRequestEvent,
+    ) -> Result<HttpRequestEvent, anyhow::Error> {
+        Ok(request)
     }
 }
 

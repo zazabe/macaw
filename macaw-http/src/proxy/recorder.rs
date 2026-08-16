@@ -61,17 +61,24 @@ impl HttpProxyRecorderActor {
 
     async fn send_request_with_error(
         &self,
-        mut request: HttpRequestEvent,
+        request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
+        let request_id = request.request_id;
+        let req = request.to_request()?;
+        let res = self.upstream.request(req).await?;
+        HttpResponseEvent::from_response(&res, request_id)
+    }
+
+    fn prepare_upstream_request(
+        &self,
+        mut request: HttpRequestEvent,
+    ) -> Result<HttpRequestEvent, anyhow::Error> {
         request.uri = self.target_url.apply(&request.uri)?;
         request.headers.insert(
             http::header::HOST.to_string(),
             self.target_url.authority.to_string(),
         );
-        let request_id = request.request_id;
-        let req = request.to_request()?;
-        let res = self.upstream.request(req).await?;
-        HttpResponseEvent::from_response(&res, request_id)
+        Ok(request)
     }
 
     fn record<E: RecordEvent>(&self, event: E) -> Result<(), anyhow::Error> {
@@ -91,17 +98,21 @@ impl HttpProxyRecorderActor {
             .options
             .overrides
             .http_override_request(request_decoded);
+        let upstream_request = self
+            .prepare_upstream_request(request_overridden.clone())
+            .context("Failed to prepare upstream request")?;
         let request_encoded = self
             .options
             .transform
-            .encode_request(request_overridden.clone())
+            .encode_request(upstream_request)
             .context("Failed to encode request")?;
         let response_future = self.send_request(request_encoded);
 
         let request_redacted = self
             .options
             .redact
-            .http_redact_request(request_overridden.clone());
+            .http_redact_request(request_overridden.clone())
+            .context("Failed to redact request")?;
 
         self.record(request_redacted)
             .context("Failed to record request")?;

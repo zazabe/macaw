@@ -74,7 +74,11 @@ impl HttpProxyReplayerActor {
             .options
             .overrides
             .http_override_request(request_decoded);
-        let request_redacted = self.options.redact.http_redact_request(request_overridden);
+        let request_redacted = self
+            .options
+            .redact
+            .http_redact_request(request_overridden)
+            .context("Failed to redact request")?;
 
         let response_sender =
             HttpResponseSender::new(response_sender, self.options.transform.clone());

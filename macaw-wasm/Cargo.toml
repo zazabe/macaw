@@ -1,0 +1,31 @@
+[package]
+name = "macaw-wasm"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "macaw_wasm"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+http.workspace = true
+macaw-core = { path = "../macaw-core" }
+macaw-http = { path = "../macaw-http" }
+serde_json.workspace = true
+uuid.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+
+[dev-dependencies]
+wat.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+httpmock.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true

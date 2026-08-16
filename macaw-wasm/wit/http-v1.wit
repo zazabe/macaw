@@ -1,0 +1,58 @@
+package macaw:http@1.0.0;
+
+interface types {
+    enum http-version {
+        http-09,
+        http-10,
+        http-11,
+        http-2,
+        http-3,
+    }
+
+    record header {
+        name: string,
+        value: string,
+    }
+
+    record request {
+        request-id: string,
+        method: string,
+        uri: string,
+        version: http-version,
+        headers: list<header>,
+        body: list<u8>,
+    }
+
+    record response {
+        request-id: string,
+        status: u16,
+        version: http-version,
+        headers: list<header>,
+        body: list<u8>,
+    }
+}
+
+interface lifecycle {
+    initialize: func(config-json: string) -> result<_, string>;
+}
+
+interface http-transform {
+    use types.{request, response};
+
+    decode-request: func(value: request) -> result<request, string>;
+    encode-request: func(value: request) -> result<request, string>;
+    decode-response: func(value: response) -> result<response, string>;
+    encode-response: func(value: response) -> result<response, string>;
+}
+
+interface http-redact {
+    use types.{request};
+
+    redact-request: func(value: request) -> result<request, string>;
+}
+
+world plugin {
+    export lifecycle;
+    export http-transform;
+    export http-redact;
+}

@@ -8,13 +8,15 @@
 
 /.devcontainer/.env
 
-/Cargo.lock
 /.cargo/*
 !/.cargo/config.toml
 
 /.docker
 /data
-/target
+**/target
+**/.venv
+**/__pycache__
+**/wit_world
 /artifacts
 **/*.rs.bk
 /.env

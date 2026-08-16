@@ -1,17 +1,27 @@
 {
   "name": "macaw",
   "dockerComposeFile": "docker-compose.yml",
-  "workspaceFolder": "/workspace/macaw",
   "service": "macaw",
-  "remoteUser": "dev",
-  "forwardPorts": [],
-  "postCreateCommand": ".devcontainer/scripts/post_create.sh",
-  "otherPortsAttributes": {
-    "onAutoForward": "ignore"
+  "workspaceFolder": "/workspace/macaw",
+  "postCreateCommand": "./.devcontainer/scripts/post_create.sh",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": "true",
+      "username": "dev",
+      "upgradePackages": "true"
+    },
+    "ghcr.io/devcontainers/features/rust:1": "latest"
   },
   "customizations": {
     "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "rust-analyzer.linkedProjects": [
+          "Cargo.toml"
+        ]
+      },
       "extensions": [
+        "esbenp.prettier-vscode",
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",
         "fill-labs.dependi",
@@ -19,5 +29,11 @@
         "vadimcn.vscode-lldb"
       ]
     }
-  }
+  },
+  "remoteUser": "dev",
+  "updateRemoteUserUID": true,
+  "otherPortsAttributes": {
+    "onAutoForward": "ignore"
+  },
+  "forwardPorts": []
 }

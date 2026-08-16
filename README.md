@@ -110,6 +110,26 @@ cargo run --example recorder
 cargo run --example replayer
 ```
 
+## WebAssembly
+
+With the optional `wasm` feature, HTTP transform and redaction hooks can be
+implemented as WebAssembly Components while native Rust hooks remain available.
+Macaw includes a sandboxed WASI 0.2 host and supports plugins written in
+languages such as Python and Rust.
+
+The [`examples/wasm`](examples/wasm) directory contains a complete recorder host
+and equivalent Python and Rust signing plugins. To build the Python guest and
+run it:
+
+```bash
+make -C examples/wasm/python build
+cargo run --release --example wasm --features wasm -- \
+  examples/wasm/python/target/http-auth-plugin-python.wasm
+```
+
+See [`examples/wasm/README.md`](examples/wasm/README.md) for prerequisites,
+the Rust guest, and full usage instructions.
+
 ## Architecture
 
 ### Terminology
