@@ -59,23 +59,6 @@ macaw.wait_until_stopped().await?;
 
 ## CLI
 
-The `macaw` binary provides record and replay commands driven by a TOML config file:
-
-```bash
-# Record (proxies from macaw.toml)
-macaw record ./data/record.json
-
-# Replay
-macaw replay ./data/record.json
-
-# With debug mode (one-line traffic per message)
-macaw -d record ./data/record.json
-macaw -d replay ./data/record.json
-
-# Custom config file
-macaw -c my_config.toml record ./data/record.json
-```
-
 ### Config file (macaw.toml)
 
 ```toml
@@ -92,8 +75,6 @@ target = "wss://echo.websocket.org/"
 overrides = "./overrides/ws.json"
 ```
 
-Recording stops and saves when you press Ctrl+C or kill the process.
-
 ### Control server and client
 
 Run a long-lived control server over TCP or a Unix socket:
@@ -109,14 +90,16 @@ Use `macaw client` (or its `macaw ctl` alias) to manage profiles and sessions:
 macaw client profile create development --file config/macaw.toml
 macaw client session record development --name test-run --output recordings/test.json
 macaw client session list --profile development
-macaw client watch <session-id>
-macaw client session stop <session-id>
+macaw client watch test-run
+macaw client session stop test-run
 ```
+
+Commands that address a session (`get`, `stop`, `delete`, and `watch`) accept
+either its ID or its unique name.
 
 Pass `--url http://host:port` or `--unix /path/to/socket` before the client
 subcommand. `MACAW_CONTROL_URL` and `MACAW_CONTROL_UNIX` provide equivalent
-defaults. Use `-o json` for scripts, or stream newline-delimited events with
-`watch --format jsonl`.
+defaults. Use `--output jsonl` for scripts and newline-delimited event streams.
 
 The foreground workflow creates a session, displays its proxy endpoints,
 watches traffic, and stops and flushes the session on Ctrl+C:
@@ -127,10 +110,12 @@ macaw client run replay development --recording recordings/test.json
 ```
 
 Watch streams the same typed entries used by recording files. Pretty output is
-rendered client-side through each event type's debug formatter, while
-`watch --format jsonl` emits raw recording entries. `watch --headers` displays
-headers exposed by the event. Traffic uses a bounded live stream; a slow client
-receives a `dropped_events` notification instead of blocking proxy traffic.
+rendered client-side through each event type's debug formatter, uses color when
+stdout is a terminal, and truncates to the terminal width. `--output jsonl`
+emits one typed entry per line. `watch --headers` displays headers exposed by
+the event. Traffic uses bounded, sequenced history so a watcher receives recent
+events when it attaches or reconnects; a slow client receives a
+`dropped_events` notification instead of blocking proxy traffic.
 
 ## Building
 

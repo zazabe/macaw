@@ -3,13 +3,16 @@ use super::model::{
     HealthResponse, ModelError, ProfileResponse, SessionResponse, TrafficStreamEvent,
 };
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use macaw::session::{ProfileId, SessionError, SessionErrorCode, SessionId, SessionManagerHandle};
+use macaw::session::{
+    ProfileId, SessionError, SessionErrorCode, SessionId, SessionManagerHandle, SessionName,
+};
+use serde::Deserialize;
 use std::time::Duration;
 use std::{convert::Infallible, time};
 
@@ -28,6 +31,7 @@ pub fn router(manager: SessionManagerHandle) -> Router {
         )
         .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/{id}", get(get_session).delete(remove_session))
+        .route("/v1/sessions/{id}/start", post(start_session))
         .route("/v1/sessions/{id}/stop", post(stop_session))
         .route("/v1/sessions/{id}/events", get(watch_session))
         .fallback(not_found)
@@ -138,7 +142,7 @@ async fn get_session(
     State(manager): State<SessionManagerHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionResponse>, ApiError> {
-    let id = parse_id(&id)?;
+    let id = resolve_session_id(&manager, &id).await?;
     let snapshot = with_timeout(QUERY_TIMEOUT, manager.get(id)).await?;
     Ok(Json(SessionResponse::from(snapshot)))
 }
@@ -147,18 +151,50 @@ async fn stop_session(
     State(manager): State<SessionManagerHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionResponse>, ApiError> {
-    let id = parse_id(&id)?;
+    let id = resolve_session_id(&manager, &id).await?;
     let snapshot = with_timeout(LIFECYCLE_TIMEOUT, manager.stop_session(id)).await?;
     Ok(Json(SessionResponse::from(snapshot)))
+}
+
+async fn start_session(
+    State(manager): State<SessionManagerHandle>,
+    Path(id): Path<String>,
+) -> Result<Json<SessionResponse>, ApiError> {
+    let id = resolve_session_id(&manager, &id).await?;
+    let snapshot = with_timeout(LIFECYCLE_TIMEOUT, manager.start_session(id)).await?;
+    Ok(Json(SessionResponse::from(snapshot)))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct WatchQuery {
+    after: Option<u64>,
 }
 
 async fn watch_session(
     State(manager): State<SessionManagerHandle>,
     Path(id): Path<String>,
+    Query(query): Query<WatchQuery>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let id = parse_id(&id)?;
-    let mut receiver = with_timeout(QUERY_TIMEOUT, manager.subscribe_traffic(id)).await?;
+    let id = resolve_session_id(&manager, &id).await?;
+    let subscription =
+        with_timeout(QUERY_TIMEOUT, manager.subscribe_traffic(id, query.after)).await?;
     let stream = async_stream::stream! {
+        if subscription.dropped > 0 {
+            let payload = TrafficStreamEvent::DroppedEvents {
+                count: subscription.dropped,
+            };
+            let data = serde_json::to_string(&payload)
+                .expect("traffic stream event must serialize");
+            yield Ok(Event::default().event("traffic").data(data));
+        }
+        for event in subscription.history {
+            let data = serde_json::to_string(&TrafficStreamEvent::from(event))
+                .expect("traffic stream event must serialize");
+            yield Ok(Event::default().event("traffic").data(data));
+        }
+        let Some(mut receiver) = subscription.receiver else {
+            return;
+        };
         loop {
             let payload = match receiver.recv().await {
                 Ok(event) => TrafficStreamEvent::from(event),
@@ -183,7 +219,7 @@ async fn remove_session(
     State(manager): State<SessionManagerHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let id = parse_id(&id)?;
+    let id = resolve_session_id(&manager, &id).await?;
     with_timeout(QUERY_TIMEOUT, manager.remove(id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -196,14 +232,22 @@ async fn not_found() -> ApiError {
     )
 }
 
-fn parse_id(value: &str) -> Result<SessionId, ApiError> {
-    value.parse().map_err(|_| {
+async fn resolve_session_id(
+    manager: &SessionManagerHandle,
+    value: &str,
+) -> Result<SessionId, ApiError> {
+    if let Ok(id) = value.parse() {
+        return Ok(id);
+    }
+    let name = value.parse::<SessionName>().map_err(|_| {
         ApiError::new(
             StatusCode::BAD_REQUEST,
             SessionErrorCode::InvalidConfig,
-            "invalid session id",
+            "invalid session id or name",
         )
-    })
+    })?;
+    let snapshot = with_timeout(QUERY_TIMEOUT, manager.get_by_name(name)).await?;
+    Ok(snapshot.id)
 }
 
 fn parse_profile_id(value: &str) -> Result<ProfileId, ApiError> {
@@ -506,10 +550,40 @@ mod tests {
         let created = response_json(response).await;
         assert_eq!(created["name"], "integration-test");
         assert_eq!(created["profile_id"], "example");
-        assert_eq!(created["state"], "running");
-        assert_eq!(created["proxies"]["api"]["protocol"], "http");
+        assert_eq!(created["state"], "ready");
+        assert!(created["proxies"].as_object().unwrap().is_empty());
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/profiles/example/sessions",
+                json!({
+                    "name": "integration-test",
+                    "mode": {"type": "record", "output": "duplicate.json"}
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("{location}/start"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let started = response_json(response).await;
+        assert_eq!(started["state"], "running");
+        assert_eq!(started["proxies"]["api"]["protocol"], "http");
         assert!(
-            created["proxies"]["api"]["url"]
+            started["proxies"]["api"]["url"]
                 .as_str()
                 .unwrap()
                 .starts_with("http://127.0.0.1:")
@@ -519,7 +593,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri(&location)
+                    .uri("/v1/sessions/integration-test")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -571,7 +645,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("{location}/stop"))
+                    .uri("/v1/sessions/integration-test/stop")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -582,10 +656,11 @@ mod tests {
         assert!(directory.path().join("api.json").exists());
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri(&location)
+                    .uri("/v1/sessions/integration-test")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -645,9 +720,9 @@ mod tests {
             .unwrap();
         let created = response_json(response).await;
         let id = created["id"].as_str().unwrap();
-        let proxy_url = created["proxies"]["api"]["url"].as_str().unwrap();
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri(format!("/v1/sessions/{id}/events"))
@@ -665,6 +740,20 @@ mod tests {
         );
         let mut body = response.into_body();
 
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{id}/start"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let started = response_json(response).await;
+        let proxy_url = started["proxies"]["api"]["url"].as_str().unwrap();
+
         let proxied = reqwest::get(format!("{proxy_url}/hello")).await.unwrap();
         assert_eq!(proxied.status(), StatusCode::OK);
         let frame = tokio::time::timeout(Duration::from_secs(2), body.frame())
@@ -675,11 +764,30 @@ mod tests {
         let data = frame.into_data().unwrap();
         let data = String::from_utf8(data.to_vec()).unwrap();
         assert!(data.contains("\"type\":\"traffic\""));
+        assert!(data.contains("\"sequence\":"));
         assert!(data.contains("\"proxy\":\"api\""));
         assert!(data.contains("\"timestamp\":"));
         assert!(data.contains("\"HttpRequest\":"));
         assert!(data.contains("\"GET\""));
         assert!(data.contains("\"headers\":{"));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/sessions/{id}/events?after=0"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(2), response.into_body().frame())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let history = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
+        assert!(history.contains("\"sequence\":1"));
+        assert!(history.contains("\"proxy\":\"api\""));
 
         manager.stop_session(id.parse().unwrap()).await.unwrap();
         manager.shutdown().await.unwrap();

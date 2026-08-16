@@ -129,10 +129,9 @@ tokio = { workspace = true }
 tracing-subscriber = { version = "*", features = [ "env-filter" ] }
 console-subscriber = "0.5"
 tokio-stream = { version = "*", features = [ "full" ] }
-signal = "0.7"
-bytesize = "2"
 reqwest = { workspace = true, features = ["json", "stream"] }
 async-stream.workspace = true
+unicode-width = "0.2.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }

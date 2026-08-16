@@ -48,6 +48,7 @@ pub struct ErrorDetail {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TrafficStreamEvent {
     Traffic {
+        sequence: u64,
         #[serde(flatten)]
         event: RecordedEvent,
     },

@@ -237,6 +237,7 @@ async fn profile_supports_concurrent_sessions_and_independent_deletion() -> Resu
             },
         ))
         .await?;
+    let first = manager.start_session(first.id).await?;
     let second = manager
         .create(CreateSession::new(
             profile_id.clone(),
@@ -245,6 +246,7 @@ async fn profile_supports_concurrent_sessions_and_independent_deletion() -> Resu
             },
         ))
         .await?;
+    let second = manager.start_session(second.id).await?;
     assert_eq!(first.profile_id, profile_id);
     assert_eq!(second.profile_id, profile_id);
     assert_ne!(

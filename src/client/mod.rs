@@ -3,16 +3,19 @@ mod transport;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
+use colored::Colorize;
 use futures::StreamExt;
 use macaw::core::{DebugDirection, RecordPart, RecordedEvent};
 use macaw::session::SessionState;
 use model::{HealthResponse, ProfileResponse, SessionResponse, TrafficStreamEvent};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
-use std::io::Read;
+use std::hash::{Hash, Hasher};
+use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use transport::ControlClient;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const DEFAULT_CONTROL_URL: &str = "http://127.0.0.1:8080";
 
@@ -30,7 +33,7 @@ pub struct ClientArgs {
     #[arg(long, default_value_t = 30)]
     timeout: u64,
 
-    /// Output format for non-streaming commands
+    /// Output format
     #[arg(short, long, value_enum, default_value_t = OutputFormat::Human)]
     output: OutputFormat,
 
@@ -45,7 +48,6 @@ pub struct ClientArgs {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Human,
-    Json,
     Jsonl,
 }
 
@@ -116,16 +118,26 @@ enum SessionCommand {
         state: Option<StateFilter>,
     },
     /// Get a session
-    Get { session: String },
+    Get {
+        #[arg(value_name = "SESSION-ID|SESSION-NAME")]
+        session: String,
+    },
     /// Stop a session and wait for completion
-    Stop { session: String },
-    /// Delete a terminal session
-    Delete { session: String },
+    Stop {
+        #[arg(value_name = "SESSION-ID|SESSION-NAME")]
+        session: String,
+    },
+    /// Delete a ready or terminal session
+    Delete {
+        #[arg(value_name = "SESSION-ID|SESSION-NAME")]
+        session: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum StateFilter {
     Starting,
+    Ready,
     Running,
     Stopping,
     Stopped,
@@ -136,6 +148,7 @@ impl From<StateFilter> for SessionState {
     fn from(value: StateFilter) -> Self {
         match value {
             StateFilter::Starting => Self::Starting,
+            StateFilter::Ready => Self::Ready,
             StateFilter::Running => Self::Running,
             StateFilter::Stopping => Self::Stopping,
             StateFilter::Stopped => Self::Stopped,
@@ -146,6 +159,7 @@ impl From<StateFilter> for SessionState {
 
 #[derive(Debug, Args)]
 struct WatchArgs {
+    #[arg(value_name = "SESSION-ID|SESSION-NAME")]
     session: String,
     #[command(flatten)]
     options: WatchOptions,
@@ -168,9 +182,6 @@ struct WatchOptions {
     /// Display headers exposed by the recorded event
     #[arg(long)]
     headers: bool,
-    /// Streaming output format
-    #[arg(long, value_enum, default_value_t = WatchFormat::Pretty)]
-    format: WatchFormat,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -184,12 +195,6 @@ enum DirectionFilter {
 enum BodyDisplay {
     None,
     Preview,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum WatchFormat {
-    Pretty,
-    Jsonl,
 }
 
 #[derive(Debug, Subcommand)]
@@ -242,7 +247,8 @@ pub async fn run(args: ClientArgs) -> Result<()> {
         .or_else(|| std::env::var("MACAW_CONTROL_URL").ok())
         .unwrap_or_else(|| DEFAULT_CONTROL_URL.to_owned());
     let client = ControlClient::new(&url, unix.as_deref(), Duration::from_secs(args.timeout))?;
-    let _no_color = args.no_color;
+    let use_color =
+        !args.no_color && std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal();
 
     match args.command {
         ClientCommand::Health => {
@@ -259,13 +265,46 @@ pub async fn run(args: ClientArgs) -> Result<()> {
         }
         ClientCommand::Profile { command } => run_profile(&client, command, args.output).await?,
         ClientCommand::Session { command } => run_session(&client, command, args.output).await?,
-        ClientCommand::Watch(args) => {
-            tokio::select! {
-                result = watch_until_closed(&client, &args.session, &args.options) => result?,
-                result = tokio::signal::ctrl_c() => result?,
+        ClientCommand::Watch(watch) => {
+            let session = client
+                .get::<SessionResponse>(&format!("/v1/sessions/{}", watch.session))
+                .await?;
+            let proxy_width = if session.proxies.is_empty() {
+                let profile = client
+                    .get::<ProfileResponse>(&format!("/v1/profiles/{}", session.profile_id))
+                    .await?;
+                profile
+                    .proxies
+                    .keys()
+                    .map(|name| UnicodeWidthStr::width(name.as_str()))
+                    .max()
+                    .unwrap_or(0)
+                    .min(12)
+            } else {
+                proxy_width(&session)
+            };
+            let final_session = tokio::select! {
+                result = watch_until_closed(
+                    &client,
+                    &watch.session,
+                    &watch.options,
+                    args.output,
+                    use_color,
+                    proxy_width,
+                    None,
+                ) => Some(result?),
+                result = tokio::signal::ctrl_c() => {
+                    result?;
+                    None
+                },
+            };
+            if let Some(session) = final_session {
+                print_session(&session, args.output)?;
             }
         }
-        ClientCommand::Run { command } => run_foreground(&client, command, args.output).await?,
+        ClientCommand::Run { command } => {
+            run_foreground(&client, command, args.output, use_color).await?
+        }
     }
     Ok(())
 }
@@ -295,7 +334,11 @@ async fn run_profile(
                         println!("{}", profile.id);
                     }
                 }
-                format => print_serialized(&profiles, format)?,
+                OutputFormat::Jsonl => {
+                    for profile in profiles {
+                        print_serialized(&profile, output)?;
+                    }
+                }
             }
         }
         ProfileCommand::Get { profile } => {
@@ -327,6 +370,7 @@ async fn run_session(
         } => {
             let body = json!({"name": name, "mode": {"type": "record", "output": path}});
             let session = create_session(client, &profile, &body).await?;
+            let session = start_session(client, &session.id.to_string()).await?;
             print_session(&session, output)?;
         }
         SessionCommand::Replay {
@@ -336,6 +380,7 @@ async fn run_session(
         } => {
             let body = json!({"name": name, "mode": {"type": "replay", "recording": recording}});
             let session = create_session(client, &profile, &body).await?;
+            let session = start_session(client, &session.id.to_string()).await?;
             print_session(&session, output)?;
         }
         SessionCommand::List { profile, state } => {
@@ -363,7 +408,11 @@ async fn run_session(
                         );
                     }
                 }
-                format => print_serialized(&sessions, format)?,
+                OutputFormat::Jsonl => {
+                    for session in sessions {
+                        print_serialized(&session, output)?;
+                    }
+                }
             }
         }
         SessionCommand::Get { session } => {
@@ -392,6 +441,7 @@ async fn run_foreground(
     client: &ControlClient,
     command: RunCommand,
     output: OutputFormat,
+    use_color: bool,
 ) -> Result<()> {
     let (profile, body, options) = match command {
         RunCommand::Record {
@@ -415,41 +465,78 @@ async fn run_foreground(
             options,
         ),
     };
-    if matches!(output, OutputFormat::Json) && !options.no_watch {
-        bail!("JSON output for `run` requires --no-watch; use JSONL for live events");
-    }
-    if matches!(output, OutputFormat::Jsonl)
-        && !options.no_watch
-        && !matches!(options.watch.format, WatchFormat::Jsonl)
-    {
-        bail!("JSONL output for `run` requires --format jsonl or --no-watch");
-    }
     let session = create_session(client, &profile, &body).await?;
-    if !matches!(output, OutputFormat::Json) {
-        print_session(&session, output)?;
-    }
     let id = session.id.to_string();
+    let response = if options.no_watch {
+        None
+    } else {
+        match client.stream(&format!("/v1/sessions/{id}/events")).await {
+            Ok(response) => Some(response),
+            Err(error) => {
+                let _ = client
+                    .post::<(), SessionResponse>(&format!("/v1/sessions/{id}/stop"), None)
+                    .await;
+                return Err(error);
+            }
+        }
+    };
+    let session = start_session(client, &id).await?;
+    print_session(&session, output)?;
+    let proxy_width = proxy_width(&session);
 
-    if options.no_watch {
+    let observed_final = if options.no_watch {
         tokio::signal::ctrl_c().await?;
+        None
     } else {
         tokio::select! {
-            result = watch_until_closed(client, &id, &options.watch) => result?,
-            result = tokio::signal::ctrl_c() => result?,
+            result = watch_until_closed(
+                client,
+                &id,
+                &options.watch,
+                output,
+                use_color,
+                proxy_width,
+                response,
+            ) => {
+                Some(result?)
+            },
+            result = tokio::signal::ctrl_c() => {
+                result?;
+                None
+            },
         }
-    }
+    };
 
     if options.keep_running {
-        eprintln!("Session {id} left running");
-        if matches!(output, OutputFormat::Json) {
+        if let Some(session) = observed_final {
             print_session(&session, output)?;
+        } else {
+            eprintln!("Session {id} left running");
         }
         return Ok(());
     }
-    let final_session = client
-        .post::<(), SessionResponse>(&format!("/v1/sessions/{id}/stop"), None)
-        .await?;
+    let final_session = match observed_final {
+        Some(session) => session,
+        None => {
+            client
+                .post::<(), SessionResponse>(&format!("/v1/sessions/{id}/stop"), None)
+                .await?
+        }
+    };
     print_session(&final_session, output)
+}
+
+async fn start_session(client: &ControlClient, id: &str) -> Result<SessionResponse> {
+    let session = client
+        .post::<(), SessionResponse>(&format!("/v1/sessions/{id}/start"), None)
+        .await?;
+    if session.state == SessionState::Failed {
+        if let Some(error) = &session.error {
+            bail!("{:?}: {}", error.code, error.message);
+        }
+        bail!("session failed to start");
+    }
+    Ok(session)
 }
 
 async fn create_session(
@@ -503,21 +590,86 @@ async fn watch_until_closed(
     client: &ControlClient,
     session: &str,
     options: &WatchOptions,
-) -> Result<()> {
-    let response = client
-        .stream(&format!("/v1/sessions/{session}/events"))
+    output: OutputFormat,
+    use_color: bool,
+    proxy_width: usize,
+    initial_response: Option<reqwest::Response>,
+) -> Result<SessionResponse> {
+    let mut after = None;
+    let mut response = initial_response;
+    loop {
+        let response = match response.take() {
+            Some(response) => response,
+            None => {
+                let cursor = after
+                    .map(|sequence| format!("?after={sequence}"))
+                    .unwrap_or_default();
+                match client
+                    .stream(&format!("/v1/sessions/{session}/events{cursor}"))
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let current = client
+                            .get::<SessionResponse>(&format!("/v1/sessions/{session}"))
+                            .await?;
+                        if current.state.is_terminal() {
+                            return Ok(current);
+                        }
+                        tracing::debug!("traffic stream reconnect failed: {error}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                }
+            }
+        };
+        consume_traffic_stream(
+            response,
+            options,
+            output,
+            use_color,
+            proxy_width,
+            &mut after,
+        )
         .await?;
+
+        let current = client
+            .get::<SessionResponse>(&format!("/v1/sessions/{session}"))
+            .await?;
+        if current.state.is_terminal() {
+            return Ok(current);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn consume_traffic_stream(
+    response: reqwest::Response,
+    options: &WatchOptions,
+    output: OutputFormat,
+    use_color: bool,
+    proxy_width: usize,
+    after: &mut Option<u64>,
+) -> Result<()> {
     let mut chunks = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
     while let Some(chunk) = chunks.next().await {
-        let chunk = chunk.context("traffic stream failed")?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        buffer = buffer.replace("\r\n", "\n");
-        while let Some(boundary) = buffer.find("\n\n") {
-            let frame = buffer[..boundary].to_owned();
-            buffer.drain(..boundary + 2);
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                tracing::debug!("traffic stream disconnected: {error}");
+                return Ok(());
+            }
+        };
+        buffer.extend_from_slice(&chunk);
+        while let Some((boundary, delimiter_len)) = sse_frame_boundary(&buffer) {
+            let frame = buffer.drain(..boundary).collect::<Vec<_>>();
+            buffer.drain(..delimiter_len);
+            let frame =
+                std::str::from_utf8(&frame).context("traffic stream was not valid UTF-8")?;
             let data = frame
                 .lines()
+                .map(|line| line.strip_suffix('\r').unwrap_or(line))
                 .filter_map(|line| line.strip_prefix("data:"))
                 .map(str::trim_start)
                 .collect::<Vec<_>>()
@@ -527,16 +679,36 @@ async fn watch_until_closed(
             }
             let event: TrafficStreamEvent =
                 serde_json::from_str(&data).context("invalid traffic stream event")?;
-            print_traffic_event(event, options)?;
+            print_traffic_event(event, options, output, use_color, proxy_width, after)?;
         }
     }
     Ok(())
 }
 
-fn print_traffic_event(event: TrafficStreamEvent, options: &WatchOptions) -> Result<()> {
+fn sse_frame_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
+    buffer
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|position| (position, 2))
+        .or_else(|| {
+            buffer
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| (position, 4))
+        })
+}
+
+fn print_traffic_event(
+    event: TrafficStreamEvent,
+    options: &WatchOptions,
+    output: OutputFormat,
+    use_color: bool,
+    proxy_width: usize,
+    after: &mut Option<u64>,
+) -> Result<()> {
     match event {
         TrafficStreamEvent::DroppedEvents { count } => {
-            if matches!(options.format, WatchFormat::Jsonl) {
+            if matches!(output, OutputFormat::Jsonl) {
                 println!(
                     "{}",
                     serde_json::to_string(&json!({
@@ -548,17 +720,32 @@ fn print_traffic_event(event: TrafficStreamEvent, options: &WatchOptions) -> Res
                 eprintln!("warning: {count} traffic events were dropped");
             }
         }
-        TrafficStreamEvent::Traffic { event } => {
+        TrafficStreamEvent::Traffic { sequence, event } => {
+            *after = Some(sequence);
             if !traffic_matches(&event, options) {
                 return Ok(());
             }
-            if matches!(options.format, WatchFormat::Jsonl) {
-                println!("{}", serde_json::to_string(&event)?);
+            if matches!(output, OutputFormat::Jsonl) {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "type": "traffic",
+                        "sequence": sequence,
+                        "event": event,
+                    }))?
+                );
             } else {
-                print_pretty_traffic(&event, options.body, options.headers);
+                print_pretty_traffic(
+                    &event,
+                    options.body,
+                    options.headers,
+                    use_color,
+                    proxy_width,
+                );
             }
         }
     }
+    std::io::stdout().flush()?;
     Ok(())
 }
 
@@ -588,7 +775,119 @@ fn traffic_matches(event: &RecordedEvent, options: &WatchOptions) -> bool {
     proxy_matches && direction_matches && protocol_matches
 }
 
-fn print_pretty_traffic(event: &RecordedEvent, body: BodyDisplay, headers: bool) {
+const PROXY_COLORS: [colored::Color; 6] = [
+    colored::Color::Red,
+    colored::Color::Green,
+    colored::Color::Yellow,
+    colored::Color::Blue,
+    colored::Color::Magenta,
+    colored::Color::Cyan,
+];
+
+fn proxy_width(session: &SessionResponse) -> usize {
+    session
+        .proxies
+        .keys()
+        .map(|name| UnicodeWidthStr::width(name.as_str()))
+        .max()
+        .unwrap_or(0)
+        .min(12)
+}
+
+fn proxy_color(proxy_id: &str) -> colored::Color {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    proxy_id.hash(&mut hasher);
+    PROXY_COLORS[hasher.finish() as usize % PROXY_COLORS.len()]
+}
+
+fn truncate_text(text: &str, width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= width {
+        return text.to_owned();
+    }
+    if width <= 3 {
+        return ".".repeat(width);
+    }
+    let mut used = 0;
+    let content_width = width - 3;
+    let mut output = String::new();
+    for character in text.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + character_width > content_width {
+            break;
+        }
+        used += character_width;
+        output.push(character);
+    }
+    output.push_str("...");
+    output
+}
+
+fn format_proxy_id(proxy_id: &str, width: usize) -> String {
+    let proxy_id = truncate_text(proxy_id, width);
+    let padding = width.saturating_sub(UnicodeWidthStr::width(proxy_id.as_str()));
+    format!("[{proxy_id}{}]", " ".repeat(padding))
+}
+
+fn shorten_ids(parts: &[RecordPart]) -> Vec<RecordPart> {
+    parts
+        .iter()
+        .map(|part| match part {
+            RecordPart::Id(id) => part.replace(&id.chars().take(8).collect::<String>()),
+            _ => part.clone(),
+        })
+        .collect()
+}
+
+fn truncate_parts(parts: &[RecordPart], max_width: usize) -> Vec<RecordPart> {
+    let parts = shorten_ids(parts);
+    let mut used = 0;
+    let mut output = Vec::new();
+    for part in parts {
+        let separator = usize::from(!output.is_empty());
+        let available = max_width.saturating_sub(used + separator);
+        if available == 0 {
+            break;
+        }
+        let text = part.to_string();
+        let width = UnicodeWidthStr::width(text.as_str());
+        if width > available {
+            output.push(part.replace(&truncate_text(&text, available)));
+            break;
+        }
+        used += separator + width;
+        output.push(part);
+    }
+    output
+}
+
+fn style_parts(parts: &[RecordPart]) -> String {
+    parts
+        .iter()
+        .map(|part| match part {
+            RecordPart::StreamType(value) => value.cyan().to_string(),
+            RecordPart::Id(value) => value.yellow().to_string(),
+            RecordPart::Meta(value) => value.green().to_string(),
+            RecordPart::Content(value) => value.dimmed().to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn style_arrow(arrow: &str) -> String {
+    match arrow {
+        "→" => arrow.blue().to_string(),
+        "←" => arrow.green().to_string(),
+        _ => arrow.dimmed().to_string(),
+    }
+}
+
+fn print_pretty_traffic(
+    event: &RecordedEvent,
+    body: BodyDisplay,
+    headers: bool,
+    use_color: bool,
+    proxy_width: usize,
+) {
     let formatter = event.event.format_debug();
     let parts = formatter
         .parts()
@@ -596,15 +895,39 @@ fn print_pretty_traffic(event: &RecordedEvent, body: BodyDisplay, headers: bool)
         .filter(|part| {
             !matches!(body, BodyDisplay::None) || !matches!(part, RecordPart::Content(_))
         })
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(" ");
-    println!(
-        "{} [{}] {}",
-        formatter.direction().arrow(),
-        event.proxy_id,
-        parts
-    );
+        .cloned()
+        .collect::<Vec<_>>();
+    let arrow = formatter.direction().arrow();
+    let proxy = format_proxy_id(event.proxy_id.as_str(), proxy_width);
+    let terminal_width = std::io::stdout()
+        .is_terminal()
+        .then(terminal_size::terminal_size)
+        .flatten()
+        .map(|(width, _)| width.0 as usize);
+    let prefix_width =
+        UnicodeWidthStr::width(arrow) + 1 + UnicodeWidthStr::width(proxy.as_str()) + 1;
+    let parts = terminal_width
+        .map(|width| truncate_parts(&parts, width.saturating_sub(prefix_width)))
+        .unwrap_or_else(|| shorten_ids(&parts));
+    if use_color {
+        println!(
+            "{} {} {}",
+            style_arrow(arrow),
+            proxy.color(proxy_color(event.proxy_id.as_str())),
+            style_parts(&parts)
+        );
+    } else {
+        println!(
+            "{} {} {}",
+            arrow,
+            proxy,
+            parts
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
     if headers {
         for (name, value) in event.event.debug_headers() {
             println!("    {name}: {value}");
@@ -671,7 +994,7 @@ fn print_session(session: &SessionResponse, output: OutputFormat) -> Result<()> 
 
 fn print_serialized(value: &impl Serialize, output: OutputFormat) -> Result<()> {
     match output {
-        OutputFormat::Human | OutputFormat::Json => {
+        OutputFormat::Human => {
             println!("{}", serde_json::to_string_pretty(value)?)
         }
         OutputFormat::Jsonl => println!("{}", serde_json::to_string(value)?),
@@ -682,6 +1005,7 @@ fn print_serialized(value: &impl Serialize, output: OutputFormat) -> Result<()> 
 fn state_name(state: SessionState) -> &'static str {
     match state {
         SessionState::Starting => "starting",
+        SessionState::Ready => "ready",
         SessionState::Running => "running",
         SessionState::Stopping => "stopping",
         SessionState::Stopped => "stopped",
@@ -744,12 +1068,27 @@ mod tests {
             protocol: vec!["http".to_owned()],
             body: BodyDisplay::None,
             headers: false,
-            format: WatchFormat::Pretty,
         };
         assert!(traffic_matches(&event, &options));
 
         let mut mismatch = options.clone();
         mismatch.direction = DirectionFilter::Response;
         assert!(!traffic_matches(&event, &mismatch));
+    }
+
+    #[test]
+    fn terminal_truncation_uses_display_width() {
+        assert_eq!(truncate_text("ab界cd", 6), "ab界cd");
+        assert_eq!(truncate_text("ab界cd", 5), "ab...");
+        assert_eq!(
+            UnicodeWidthStr::width(truncate_text("ab界cd", 5).as_str()),
+            5
+        );
+    }
+
+    #[test]
+    fn sse_frames_support_lf_and_crlf_boundaries() {
+        assert_eq!(sse_frame_boundary(b"data: one\n\ndata:"), Some((9, 2)));
+        assert_eq!(sse_frame_boundary(b"data: two\r\n\r\ndata:"), Some((9, 4)));
     }
 }

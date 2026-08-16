@@ -4,5 +4,8 @@ mod session;
 mod types;
 
 pub use manager::*;
-pub use session::{GetSessionStatus, SessionActor, StopSession, SubscribeSessionTraffic};
+pub use session::{
+    GetSessionStatus, SequencedRecordedEvent, SessionActor, StartSession, StopSession,
+    SubscribeSessionTraffic, TrafficSubscription,
+};
 pub use types::*;

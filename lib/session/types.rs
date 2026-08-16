@@ -101,6 +101,9 @@ impl SessionName {
         if value.is_empty() || value.len() > 64 {
             return Err("session name must contain between 1 and 64 characters".to_owned());
         }
+        if Uuid::parse_str(&value).is_ok() {
+            return Err("session name must not be a UUID".to_owned());
+        }
         if !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
@@ -174,6 +177,7 @@ impl SessionConfig {
 #[serde(rename_all = "snake_case")]
 pub enum SessionState {
     Starting,
+    Ready,
     Running,
     Stopping,
     Stopped,
@@ -303,7 +307,12 @@ mod tests {
         for valid in ["checkout", "record-1", "replay_test", "api.example"] {
             assert!(SessionName::new(valid).is_ok());
         }
-        for invalid in ["", "contains space", "contains/slash"] {
+        for invalid in [
+            "",
+            "contains space",
+            "contains/slash",
+            "018f5f6d-f8d8-7d42-8e90-4ab8f55189ef",
+        ] {
             assert!(SessionName::new(invalid).is_err());
         }
     }

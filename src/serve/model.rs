@@ -273,6 +273,7 @@ pub struct ErrorDetail {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TrafficStreamEvent {
     Traffic {
+        sequence: u64,
         #[serde(flatten)]
         event: RecordedEvent,
     },
@@ -281,9 +282,12 @@ pub enum TrafficStreamEvent {
     },
 }
 
-impl From<RecordedEvent> for TrafficStreamEvent {
-    fn from(event: RecordedEvent) -> Self {
-        Self::Traffic { event }
+impl From<macaw::session::SequencedRecordedEvent> for TrafficStreamEvent {
+    fn from(event: macaw::session::SequencedRecordedEvent) -> Self {
+        Self::Traffic {
+            sequence: event.sequence,
+            event: event.event,
+        }
     }
 }
 

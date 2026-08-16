@@ -1,7 +1,7 @@
 use super::{
     GetSessionStatus, ProfileId, ProfileSnapshot, SessionActor, SessionConfig, SessionError,
-    SessionErrorCode, SessionId, SessionMode, SessionName, SessionSnapshot, StopSession,
-    SubscribeSessionTraffic,
+    SessionErrorCode, SessionId, SessionMode, SessionName, SessionSnapshot, StartSession,
+    StopSession, SubscribeSessionTraffic, TrafficSubscription,
 };
 use macaw_core::prelude::*;
 use std::collections::HashMap;
@@ -55,11 +55,21 @@ pub struct GetSession {
     pub id: SessionId,
 }
 
+#[derive(Debug, Clone)]
+pub struct GetSessionByName {
+    pub name: SessionName,
+}
+
 #[derive(Debug)]
 pub struct ListSessions;
 
 #[derive(Debug, Clone, Copy)]
 pub struct StopSessionById {
+    pub id: SessionId,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StartSessionById {
     pub id: SessionId,
 }
 
@@ -80,6 +90,7 @@ pub struct GetManagerReadiness;
 #[derive(Debug, Clone, Copy)]
 pub struct SubscribeTraffic {
     pub id: SessionId,
+    pub after: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -122,6 +133,15 @@ impl SessionManager {
     async fn stop(handle: &ActorHandle<SessionActor>) -> Result<SessionSnapshot, SessionError> {
         handle
             .request(StopSession)
+            .await
+            .map_err(SessionError::actor)?
+    }
+
+    async fn start_session(
+        handle: &ActorHandle<SessionActor>,
+    ) -> Result<SessionSnapshot, SessionError> {
+        handle
+            .request(StartSession)
             .await
             .map_err(SessionError::actor)?
     }
@@ -169,13 +189,15 @@ impl SessionManagerHandle {
     ) -> Result<SessionSnapshot, SessionError> {
         let profile_id = transient_profile_id();
         self.create_profile(profile_id.clone(), config).await?;
-        self.request(CreateSession::new(
-            profile_id,
-            SessionMode::Record {
-                output: output.into(),
-            },
-        ))
-        .await?
+        let snapshot = self
+            .request(CreateSession::new(
+                profile_id,
+                SessionMode::Record {
+                    output: output.into(),
+                },
+            ))
+            .await??;
+        self.start_session(snapshot.id).await
     }
 
     pub async fn create_profile(
@@ -209,17 +231,23 @@ impl SessionManagerHandle {
     ) -> Result<SessionSnapshot, SessionError> {
         let profile_id = transient_profile_id();
         self.create_profile(profile_id.clone(), config).await?;
-        self.request(CreateSession::new(
-            profile_id,
-            SessionMode::Replay {
-                recording: recording.into(),
-            },
-        ))
-        .await?
+        let snapshot = self
+            .request(CreateSession::new(
+                profile_id,
+                SessionMode::Replay {
+                    recording: recording.into(),
+                },
+            ))
+            .await??;
+        self.start_session(snapshot.id).await
     }
 
     pub async fn get(&self, id: SessionId) -> Result<SessionSnapshot, SessionError> {
         self.request(GetSession { id }).await?
+    }
+
+    pub async fn get_by_name(&self, name: SessionName) -> Result<SessionSnapshot, SessionError> {
+        self.request(GetSessionByName { name }).await?
     }
 
     pub async fn list(&self) -> Result<Vec<SessionSnapshot>, SessionError> {
@@ -235,6 +263,10 @@ impl SessionManagerHandle {
 
     pub async fn stop_session(&self, id: SessionId) -> Result<SessionSnapshot, SessionError> {
         self.request(StopSessionById { id }).await?
+    }
+
+    pub async fn start_session(&self, id: SessionId) -> Result<SessionSnapshot, SessionError> {
+        self.request(StartSessionById { id }).await?
     }
 
     pub async fn remove(&self, id: SessionId) -> Result<(), SessionError> {
@@ -258,8 +290,9 @@ impl SessionManagerHandle {
     pub async fn subscribe_traffic(
         &self,
         id: SessionId,
-    ) -> Result<tokio::sync::broadcast::Receiver<RecordedEvent>, SessionError> {
-        self.request(SubscribeTraffic { id }).await?
+        after: Option<u64>,
+    ) -> Result<TrafficSubscription, SessionError> {
+        self.request(SubscribeTraffic { id, after }).await?
     }
 
     /// Gracefully stop all sessions and await manager completion.
@@ -370,6 +403,17 @@ impl ActorHandler<CreateSession> for SessionManager {
                 format!("session {id} already exists"),
             ));
         }
+        if let Some(name) = &request.name {
+            let handles = self.sessions.values().cloned().collect::<Vec<_>>();
+            for handle in handles {
+                if Self::snapshot(&handle).await?.name.as_ref() == Some(name) {
+                    return Err(SessionError::new(
+                        SessionErrorCode::Duplicate,
+                        format!("session name {name} already exists"),
+                    ));
+                }
+            }
+        }
         let config = self
             .profiles
             .get(&request.profile_id)
@@ -381,7 +425,7 @@ impl ActorHandler<CreateSession> for SessionManager {
                 )
             })?;
         let (handle, snapshot) =
-            SessionActor::start(id, request.name, request.profile_id, request.mode, config).await?;
+            SessionActor::prepare(id, request.name, request.profile_id, request.mode, config)?;
         if self.sessions.insert(id, handle).is_some() {
             return Err(SessionError::new(
                 SessionErrorCode::Duplicate,
@@ -403,6 +447,24 @@ impl ActorHandler<GetSession> for SessionManager {
             )
         })?;
         Self::snapshot(handle).await
+    }
+}
+
+impl ActorHandler<GetSessionByName> for SessionManager {
+    type Reply = Result<SessionSnapshot, SessionError>;
+
+    async fn handle(&mut self, request: GetSessionByName) -> Self::Reply {
+        let handles = self.sessions.values().cloned().collect::<Vec<_>>();
+        for handle in handles {
+            let snapshot = Self::snapshot(&handle).await?;
+            if snapshot.name.as_ref() == Some(&request.name) {
+                return Ok(snapshot);
+            }
+        }
+        Err(SessionError::new(
+            SessionErrorCode::NotFound,
+            format!("session {} not found", request.name),
+        ))
     }
 }
 
@@ -457,6 +519,20 @@ impl ActorHandler<StopSessionById> for SessionManager {
     }
 }
 
+impl ActorHandler<StartSessionById> for SessionManager {
+    type Reply = Result<SessionSnapshot, SessionError>;
+
+    async fn handle(&mut self, request: StartSessionById) -> Self::Reply {
+        let handle = self.sessions.get(&request.id).ok_or_else(|| {
+            SessionError::new(
+                SessionErrorCode::NotFound,
+                format!("session {} not found", request.id),
+            )
+        })?;
+        Self::start_session(handle).await
+    }
+}
+
 impl ActorHandler<RemoveSession> for SessionManager {
     type Reply = Result<(), SessionError>;
 
@@ -468,10 +544,10 @@ impl ActorHandler<RemoveSession> for SessionManager {
             )
         })?;
         let snapshot = Self::snapshot(handle).await?;
-        if !snapshot.state.is_terminal() {
+        if !snapshot.state.is_terminal() && snapshot.state != super::SessionState::Ready {
             return Err(SessionError::new(
                 SessionErrorCode::NotTerminal,
-                format!("session {} is not terminal", request.id),
+                format!("session {} is running", request.id),
             ));
         }
         if let Some(handle) = self.sessions.remove(&request.id) {
@@ -513,7 +589,7 @@ impl ActorHandler<GetManagerReadiness> for SessionManager {
 }
 
 impl ActorHandler<SubscribeTraffic> for SessionManager {
-    type Reply = Result<tokio::sync::broadcast::Receiver<RecordedEvent>, SessionError>;
+    type Reply = Result<TrafficSubscription, SessionError>;
 
     async fn handle(&mut self, request: SubscribeTraffic) -> Self::Reply {
         let handle = self.sessions.get(&request.id).ok_or_else(|| {
@@ -523,7 +599,9 @@ impl ActorHandler<SubscribeTraffic> for SessionManager {
             )
         })?;
         handle
-            .request(SubscribeSessionTraffic)
+            .request(SubscribeSessionTraffic {
+                after: request.after,
+            })
             .await
             .map_err(SessionError::actor)?
     }

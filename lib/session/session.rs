@@ -3,11 +3,14 @@ use super::{
     SessionOutcome, SessionSnapshot, SessionState,
 };
 use macaw_core::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, watch};
 
 const TRAFFIC_CHANNEL_CAPACITY: usize = 1024;
+const TRAFFIC_HISTORY_CAPACITY: usize = 1024;
+const DEFAULT_TRAFFIC_HISTORY: usize = 3;
 
 #[derive(Debug)]
 pub struct GetSessionStatus;
@@ -16,7 +19,78 @@ pub struct GetSessionStatus;
 pub struct StopSession;
 
 #[derive(Debug)]
-pub struct SubscribeSessionTraffic;
+pub struct StartSession;
+
+#[derive(Debug)]
+pub struct SubscribeSessionTraffic {
+    pub after: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SequencedRecordedEvent {
+    pub sequence: u64,
+    pub event: RecordedEvent,
+}
+
+#[derive(Debug)]
+pub struct TrafficSubscription {
+    pub history: Vec<SequencedRecordedEvent>,
+    pub receiver: Option<broadcast::Receiver<SequencedRecordedEvent>>,
+    pub dropped: u64,
+}
+
+#[derive(Debug, Default)]
+struct TrafficHistory {
+    next_sequence: u64,
+    events: VecDeque<SequencedRecordedEvent>,
+}
+
+impl TrafficHistory {
+    fn push(&mut self, event: RecordedEvent) -> SequencedRecordedEvent {
+        self.next_sequence += 1;
+        let event = SequencedRecordedEvent {
+            sequence: self.next_sequence,
+            event,
+        };
+        self.events.push_back(event.clone());
+        if self.events.len() > TRAFFIC_HISTORY_CAPACITY {
+            self.events.pop_front();
+        }
+        event
+    }
+
+    fn snapshot(&self, after: Option<u64>) -> (Vec<SequencedRecordedEvent>, u64) {
+        match after {
+            Some(after) => {
+                let first = self.events.front().map(|event| event.sequence);
+                let dropped = first
+                    .filter(|first| after.saturating_add(1) < *first)
+                    .map(|first| first.saturating_sub(after.saturating_add(1)))
+                    .unwrap_or(0);
+                (
+                    self.events
+                        .iter()
+                        .filter(|event| event.sequence > after)
+                        .cloned()
+                        .collect(),
+                    dropped,
+                )
+            }
+            None => (
+                self.events
+                    .iter()
+                    .rev()
+                    .take(DEFAULT_TRAFFIC_HISTORY)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect(),
+                0,
+            ),
+        }
+    }
+}
 
 #[derive(Debug)]
 struct SessionCompleted(SessionOutcome);
@@ -35,9 +109,12 @@ pub struct SessionActor {
     endpoints: BTreeMap<String, SessionEndpoint>,
     outcome: Option<SessionOutcome>,
     error: Option<SessionError>,
-    runtime_exit: AppExitHandle,
-    completion: watch::Receiver<Option<Result<SessionOutcome, SessionError>>>,
-    traffic_tx: Option<broadcast::Sender<RecordedEvent>>,
+    config: Option<SessionConfig>,
+    runtime_exit: Option<AppExitHandle>,
+    completion: Option<watch::Receiver<Option<Result<SessionOutcome, SessionError>>>>,
+    traffic_history: Arc<Mutex<TrafficHistory>>,
+    traffic_tx: Option<broadcast::Sender<SequencedRecordedEvent>>,
+    actor_tx: ActorChannelSender<SessionActor>,
 }
 
 impl SessionActor {
@@ -45,7 +122,7 @@ impl SessionActor {
         validate_profile(config)
     }
 
-    pub(crate) async fn start(
+    pub(crate) fn prepare(
         id: SessionId,
         name: Option<SessionName>,
         profile_id: ProfileId,
@@ -54,16 +131,10 @@ impl SessionActor {
     ) -> Result<(ActorHandle<Self>, SessionSnapshot), SessionError> {
         config.resolve_proxy_paths();
         validate(&mode, &config)?;
-        let external_debug_tx = config.debug_tx.take();
-        let (debug_tx, mut debug_rx) = tokio::sync::mpsc::unbounded_channel();
         let (traffic_tx, _) = broadcast::channel(TRAFFIC_CHANNEL_CAPACITY);
-        let traffic_bridge_tx = traffic_tx.clone();
-        config.debug_tx = Some(debug_tx);
-        let (runtime_exit, completion_future) = start_runtime(&mode, &config).await?;
         let actor_system = ActorSystem::new();
         let context = actor_system.actor_context(&format!("session:{id}"));
-        let (tx, rx) = actor_channel();
-        let (completion_tx, completion_rx) = watch::channel(None);
+        let (actor_tx, actor_rx) = actor_channel();
 
         let actor = Self {
             context,
@@ -71,40 +142,19 @@ impl SessionActor {
             name,
             profile_id,
             mode,
-            state: SessionState::Running,
-            endpoints: completion_future.endpoints,
+            state: SessionState::Ready,
+            endpoints: BTreeMap::new(),
             outcome: None,
             error: None,
-            runtime_exit,
-            completion: completion_rx,
+            config: Some(config),
+            runtime_exit: None,
+            completion: None,
+            traffic_history: Arc::new(Mutex::new(TrafficHistory::default())),
             traffic_tx: Some(traffic_tx),
+            actor_tx: actor_tx.clone(),
         };
         let snapshot = actor.snapshot();
-        let handle = actor.run_with_channel(tx.clone(), rx);
-
-        tokio::spawn(async move {
-            while let Some(recorded) = debug_rx.recv().await {
-                if let Some(ref external) = external_debug_tx {
-                    let _ = external.send(recorded.clone());
-                }
-                let _ = traffic_bridge_tx.send(recorded);
-            }
-        });
-
-        tokio::spawn(async move {
-            let result = completion_future.future.await;
-            completion_tx.send_replace(Some(result.clone()));
-            match result {
-                Ok(outcome) => {
-                    let _ = tx.send(SessionCompleted(outcome));
-                }
-                Err(error) => {
-                    let _ = tx.send(SessionFailed(error));
-                }
-            }
-        });
-
-        Ok((handle, snapshot))
+        Ok((actor.run_with_channel(actor_tx, actor_rx), snapshot))
     }
 
     fn snapshot(&self) -> SessionSnapshot {
@@ -140,11 +190,15 @@ impl SessionActor {
     async fn wait_for_completion(
         &mut self,
     ) -> Result<Result<SessionOutcome, SessionError>, SessionError> {
+        let completion = self
+            .completion
+            .as_mut()
+            .ok_or_else(|| SessionError::runtime("session runtime was not started"))?;
         loop {
-            if let Some(result) = self.completion.borrow_and_update().clone() {
+            if let Some(result) = completion.borrow_and_update().clone() {
                 return Ok(result);
             }
-            self.completion
+            completion
                 .changed()
                 .await
                 .map_err(|_| SessionError::runtime("session completion channel closed"))?;
@@ -158,8 +212,10 @@ impl Actor for SessionActor {
     }
 
     async fn on_stop(&mut self, _reason: ActorStopReason) {
-        if !self.state.is_terminal() {
-            self.runtime_exit.exit();
+        if !self.state.is_terminal()
+            && let Some(runtime_exit) = &self.runtime_exit
+        {
+            runtime_exit.exit();
         }
     }
 }
@@ -168,11 +224,87 @@ impl ActorHandler<GetSessionStatus> for SessionActor {
     type Reply = SessionSnapshot;
 
     async fn handle(&mut self, _message: GetSessionStatus) -> Self::Reply {
-        let completion = self.completion.borrow().clone();
+        let completion = self
+            .completion
+            .as_ref()
+            .and_then(|completion| completion.borrow().clone());
         if let Some(result) = completion {
             self.apply_completion(result);
         }
         self.snapshot()
+    }
+}
+
+impl ActorHandler<StartSession> for SessionActor {
+    type Reply = Result<SessionSnapshot, SessionError>;
+
+    async fn handle(&mut self, _message: StartSession) -> Self::Reply {
+        if self.state != SessionState::Ready {
+            return Err(SessionError::new(
+                super::SessionErrorCode::Unsupported,
+                format!("session cannot start from state {:?}", self.state),
+            ));
+        }
+        self.state = SessionState::Starting;
+        let mut config = self
+            .config
+            .take()
+            .ok_or_else(|| SessionError::startup("session configuration is unavailable"))?;
+        let external_debug_tx = config.debug_tx.take();
+        let (debug_tx, mut debug_rx) = tokio::sync::mpsc::unbounded_channel();
+        config.debug_tx = Some(debug_tx);
+
+        let (runtime_exit, completion_future) = match start_runtime(&self.mode, &config).await {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.state = SessionState::Failed;
+                self.error = Some(error);
+                self.traffic_tx.take();
+                return Ok(self.snapshot());
+            }
+        };
+        self.endpoints = completion_future.endpoints;
+        self.runtime_exit = Some(runtime_exit);
+        self.state = SessionState::Running;
+
+        let traffic_history = self.traffic_history.clone();
+        let traffic_tx = self
+            .traffic_tx
+            .as_ref()
+            .expect("ready session must have a traffic sender")
+            .clone();
+        let traffic_bridge = tokio::spawn(async move {
+            while let Some(recorded) = debug_rx.recv().await {
+                if let Some(ref external) = external_debug_tx {
+                    let _ = external.send(recorded.clone());
+                }
+                let mut history = traffic_history
+                    .lock()
+                    .expect("traffic history lock poisoned");
+                let sequenced = history.push(recorded);
+                let _ = traffic_tx.send(sequenced);
+                drop(history);
+            }
+        });
+
+        let (completion_tx, completion_rx) = watch::channel(None);
+        self.completion = Some(completion_rx);
+        let actor_tx = self.actor_tx.clone();
+        tokio::spawn(async move {
+            let result = completion_future.future.await;
+            let _ = traffic_bridge.await;
+            completion_tx.send_replace(Some(result.clone()));
+            match result {
+                Ok(outcome) => {
+                    let _ = actor_tx.send(SessionCompleted(outcome));
+                }
+                Err(error) => {
+                    let _ = actor_tx.send(SessionFailed(error));
+                }
+            }
+        });
+
+        Ok(self.snapshot())
     }
 }
 
@@ -183,9 +315,17 @@ impl ActorHandler<StopSession> for SessionActor {
         if self.state.is_terminal() {
             return Ok(self.snapshot());
         }
+        if self.state == SessionState::Ready {
+            self.state = SessionState::Stopped;
+            self.config.take();
+            self.traffic_tx.take();
+            return Ok(self.snapshot());
+        }
         if self.state != SessionState::Stopping {
             self.state = SessionState::Stopping;
-            self.runtime_exit.exit();
+            if let Some(runtime_exit) = &self.runtime_exit {
+                runtime_exit.exit();
+            }
         }
         let result = self.wait_for_completion().await?;
         self.apply_completion(result);
@@ -194,18 +334,20 @@ impl ActorHandler<StopSession> for SessionActor {
 }
 
 impl ActorHandler<SubscribeSessionTraffic> for SessionActor {
-    type Reply = Result<broadcast::Receiver<RecordedEvent>, SessionError>;
+    type Reply = Result<TrafficSubscription, SessionError>;
 
-    async fn handle(&mut self, _message: SubscribeSessionTraffic) -> Self::Reply {
-        self.traffic_tx
-            .as_ref()
-            .map(broadcast::Sender::subscribe)
-            .ok_or_else(|| {
-                SessionError::new(
-                    super::SessionErrorCode::NotTerminal,
-                    "session traffic stream is no longer available",
-                )
-            })
+    async fn handle(&mut self, message: SubscribeSessionTraffic) -> Self::Reply {
+        let history = self
+            .traffic_history
+            .lock()
+            .expect("traffic history lock poisoned");
+        let (events, dropped) = history.snapshot(message.after);
+        let receiver = self.traffic_tx.as_ref().map(broadcast::Sender::subscribe);
+        Ok(TrafficSubscription {
+            history: events,
+            receiver,
+            dropped,
+        })
     }
 }
 
