@@ -2,20 +2,59 @@ use std::pin::Pin;
 
 use crate::lib::*;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct HttpProxyConfig {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpProxyConfig {
+    #[serde(default = "default_bind")]
     bind: String,
-    target: String,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
     overrides: Option<String>,
+}
+
+impl HttpProxyConfig {
+    pub fn new(bind: impl Into<String>, target: impl Into<String>) -> Self {
+        Self {
+            bind: bind.into(),
+            target: Some(target.into()),
+            overrides: None,
+        }
+    }
+
+    pub fn replay(bind: impl Into<String>) -> Self {
+        Self {
+            bind: bind.into(),
+            target: None,
+            overrides: None,
+        }
+    }
+
+    pub fn with_overrides(mut self, path: impl Into<String>) -> Self {
+        self.overrides = Some(path.into());
+        self
+    }
+}
+
+fn default_bind() -> String {
+    "127.0.0.1:0".to_string()
 }
 
 #[typetag::serde(name = "http")]
 impl ProxyConfig for HttpProxyConfig {
+    fn protocol(&self) -> &'static str {
+        "http"
+    }
+
+    fn validate(&self, recording: bool) -> Result<(), String> {
+        validate_target(self.target.as_deref(), recording, &["http", "https"])
+    }
+
     fn bind(&self) -> &str {
         &self.bind
     }
-    fn target(&self) -> &str {
-        &self.target
+    fn target(&self) -> Option<&str> {
+        self.target.as_deref()
     }
     fn overrides(&self) -> Option<&str> {
         self.overrides.as_deref()
@@ -31,7 +70,7 @@ impl ProxyConfig for HttpProxyConfig {
         &'a self,
         proxy_id: &'b str,
         macaw: &'b mut Macaw<Recorder>,
-    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + 'b>> {
+    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + Send + 'b>> {
         let overrides = load_overrides(self.overrides.as_deref());
         Box::pin(async move {
             let options = HttpProxyOptions {
@@ -40,7 +79,12 @@ impl ProxyConfig for HttpProxyConfig {
                 overrides: overrides?,
             };
             let addr = macaw
-                .add_http_proxy(proxy_id, &self.bind, &self.target, options)
+                .add_http_proxy(
+                    proxy_id,
+                    &self.bind,
+                    self.target.as_deref().unwrap_or_default(),
+                    options,
+                )
                 .await?;
             Ok(addr)
         })
@@ -50,7 +94,7 @@ impl ProxyConfig for HttpProxyConfig {
         &'a self,
         proxy_id: &'b str,
         macaw: &'b mut Macaw<Replayer>,
-    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + 'b>> {
+    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, anyhow::Error>> + Send + 'b>> {
         let overrides = load_overrides(self.overrides.as_deref());
         Box::pin(async move {
             let options = HttpProxyOptions {
@@ -62,6 +106,25 @@ impl ProxyConfig for HttpProxyConfig {
             Ok(addr)
         })
     }
+}
+
+fn validate_target(
+    target: Option<&str>,
+    required: bool,
+    allowed_schemes: &[&str],
+) -> Result<(), String> {
+    let Some(target) = target.filter(|target| !target.is_empty()) else {
+        return if required {
+            Err("recording proxy requires a target".to_owned())
+        } else {
+            Ok(())
+        };
+    };
+    let target = url::Url::parse(target).map_err(|_| "invalid HTTP proxy target".to_owned())?;
+    if !allowed_schemes.contains(&target.scheme()) || target.host_str().is_none() {
+        return Err("invalid HTTP proxy target".to_owned());
+    }
+    Ok(())
 }
 
 fn load_overrides(path: Option<&str>) -> Result<Box<dyn HttpOverride>, anyhow::Error> {

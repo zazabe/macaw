@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::task::JoinHandle;
 
 use crate::lib::*;
@@ -31,11 +32,21 @@ pub trait Actor: Send + Sized + 'static {
         rx: ActorChannelReceiver<Self>,
     ) -> ActorHandle<Self> {
         let context = self.context().clone();
-        let _task = tokio::task::Builder::new()
+        let task = tokio::task::Builder::new()
             .name(&context.name)
-            .spawn(run_actor(self, rx));
+            .spawn(run_actor(self, rx))
+            .expect("failed to spawn actor task");
+        let (completion_tx, completion_rx) = watch::channel(ActorTaskStatus::Running);
+        tokio::spawn(async move {
+            let status = match task.await {
+                Ok(Ok(())) => ActorTaskStatus::Stopped,
+                Ok(Err(error)) => ActorTaskStatus::Failed(Arc::from(error.to_string())),
+                Err(error) => ActorTaskStatus::Failed(Arc::from(error.to_string())),
+            };
+            completion_tx.send_replace(status);
+        });
 
-        ActorHandle::new(tx, context)
+        ActorHandle::new(tx, context, completion_rx)
     }
 
     fn run(self) -> ActorHandle<Self> {
@@ -56,40 +67,43 @@ where
 // ------------------------------------------------------------
 
 #[derive(Debug)]
-pub(crate) struct AppContext {
+pub struct AppContext {
     terminate: AppTerminator,
 }
 
 impl AppContext {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             terminate: AppTerminator::new(),
         }
     }
 
-    pub(crate) fn actor_context(&self, name: &str) -> ActorContext {
+    pub fn actor_context(&self, name: &str) -> ActorContext {
         let notifier = self.terminate.exit_handle();
         ActorContext::new(name, notifier)
     }
 
-    pub(crate) fn exit_handle(&self) -> AppExitHandle {
+    pub fn exit_handle(&self) -> AppExitHandle {
         self.terminate.exit_handle()
     }
 
     #[allow(unused)]
-    pub(crate) fn exit(&self) {
+    pub fn exit(&self) {
         self.terminate.exit();
     }
 
     #[allow(unused)]
-    pub(crate) fn exit_with_error(&self, error: anyhow::Error) {
+    pub fn exit_with_error(&self, error: anyhow::Error) {
         self.terminate.exit_with_error(error);
     }
 
-    pub(crate) async fn wait_until_exit(self) -> Result<(), AppError> {
+    pub async fn wait_until_exit(self) -> Result<(), AppError> {
         self.terminate.wait_until_exit().await
     }
 }
+
+/// Public factory and lifecycle domain for a related group of actors.
+pub type ActorSystem = AppContext;
 
 impl Default for AppContext {
     fn default() -> Self {
@@ -104,6 +118,7 @@ pub struct ActorContext {
     name: String,
     exit_notifier: AppExitHandle,
     task_terminator: TaskTerminator,
+    tasks: Arc<ActorTaskTracker>,
 }
 
 impl ActorContext {
@@ -112,6 +127,7 @@ impl ActorContext {
             name: name.to_string(),
             exit_notifier,
             task_terminator: TaskTerminator::new(),
+            tasks: Arc::new(ActorTaskTracker::default()),
         }
     }
 
@@ -124,6 +140,7 @@ impl ActorContext {
             name: self.name.clone() + ":" + name,
             exit_notifier: self.exit_notifier.clone(),
             task_terminator: TaskTerminator::new(),
+            tasks: Arc::new(ActorTaskTracker::default()),
         }
     }
 
@@ -149,11 +166,63 @@ impl ActorContext {
         R: Send + 'static,
     {
         let name = self.name.clone() + ":" + name;
+        self.tasks.started();
+        let tasks = Arc::clone(&self.tasks);
         let handle = tokio::task::Builder::new().name(&name).spawn({
             let mut context = self.clone();
-            async move { terminatable_future(&mut context, future).await }
-        })?;
+            async move {
+                let _guard = ActorTaskGuard(tasks);
+                terminatable_future(&mut context, future).await
+            }
+        });
+        if handle.is_err() {
+            self.tasks.finished();
+        }
+        let handle = handle?;
         Ok(handle)
+    }
+
+    async fn stop_and_join_children(&self, stop_tasks: bool) {
+        if stop_tasks {
+            self.task_terminator.stop();
+        }
+        self.tasks.wait().await;
+    }
+}
+
+struct ActorTaskGuard(Arc<ActorTaskTracker>);
+
+impl Drop for ActorTaskGuard {
+    fn drop(&mut self) {
+        self.0.finished();
+    }
+}
+
+#[derive(Debug, Default)]
+struct ActorTaskTracker {
+    active: AtomicUsize,
+    notify: tokio::sync::Notify,
+}
+
+impl ActorTaskTracker {
+    fn started(&self) {
+        self.active.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn finished(&self) {
+        if self.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.notify.notify_waiters();
+        }
+    }
+
+    async fn wait(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.active.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            notified.await;
+        }
     }
 }
 
@@ -165,6 +234,8 @@ pub trait ErasedActorHandle: Send {
     fn exit(&self);
 
     fn exit_with_error(&self, error: anyhow::Error);
+
+    fn completion(&self) -> ActorCompletion;
 }
 
 impl fmt::Debug for Box<dyn ErasedActorHandle> {
@@ -185,9 +256,17 @@ impl<A> ActorHandle<A>
 where
     A: Actor,
 {
-    pub fn new(tx: ActorChannelSender<A>, context: ActorContext) -> Self {
+    pub fn new(
+        tx: ActorChannelSender<A>,
+        context: ActorContext,
+        completion: watch::Receiver<ActorTaskStatus>,
+    ) -> Self {
         Self {
-            inner: Arc::new(ActorHandleInner { tx, context }),
+            inner: Arc::new(ActorHandleInner {
+                tx,
+                context,
+                completion,
+            }),
         }
     }
 
@@ -211,6 +290,31 @@ where
     {
         self.inner.request(message).await
     }
+
+    /// Stop only this actor, leaving other actors in its system running.
+    pub fn stop(&self) {
+        self.inner.context.task_terminator.stop();
+    }
+
+    /// Request exit for the actor's whole application lifecycle.
+    pub fn exit(&self) {
+        self.inner.context.exit();
+    }
+
+    pub fn exit_with_error(&self, error: anyhow::Error) {
+        self.inner.context.exit_with_error(error);
+    }
+
+    /// Return a cloneable completion observer. Every observer sees the same result.
+    pub fn completion(&self) -> ActorCompletion {
+        ActorCompletion {
+            receiver: self.inner.completion.clone(),
+        }
+    }
+
+    pub async fn wait(&self) -> Result<(), anyhow::Error> {
+        self.completion().wait().await
+    }
 }
 
 impl<A> Clone for ActorHandle<A>
@@ -231,6 +335,37 @@ where
 {
     tx: ActorChannelSender<A>,
     context: ActorContext,
+    completion: watch::Receiver<ActorTaskStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActorTaskStatus {
+    Running,
+    Stopped,
+    Failed(Arc<str>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ActorCompletion {
+    receiver: watch::Receiver<ActorTaskStatus>,
+}
+
+impl ActorCompletion {
+    pub async fn wait(mut self) -> Result<(), anyhow::Error> {
+        loop {
+            match self.receiver.borrow_and_update().clone() {
+                ActorTaskStatus::Running => {}
+                ActorTaskStatus::Stopped => return Ok(()),
+                ActorTaskStatus::Failed(error) => {
+                    return Err(anyhow::anyhow!(error.to_string()));
+                }
+            }
+            self.receiver
+                .changed()
+                .await
+                .map_err(|_| anyhow::anyhow!("actor completion channel closed"))?;
+        }
+    }
 }
 
 impl<A> ActorHandleInner<A>
@@ -270,6 +405,10 @@ impl<A: Actor> ErasedActorHandle for ActorHandle<A> {
 
     fn exit_with_error(&self, error: anyhow::Error) {
         self.inner.context.exit_with_error(error);
+    }
+
+    fn completion(&self) -> ActorCompletion {
+        ActorHandle::completion(self)
     }
 }
 
@@ -330,7 +469,9 @@ where
             }
         }
     }
+    let stop_tasks = stop_reason != ActorStopReason::ExitNotificationReceived;
     actor.on_stop(stop_reason).await;
+    context.stop_and_join_children(stop_tasks).await;
     Ok(())
 }
 

@@ -89,7 +89,9 @@ where
             match self.reply {
                 Some(reply) => {
                     let outcome = <Self::Actor as ActorHandler<M>>::handle(actor, self.msg).await;
-                    reply.send(outcome)?;
+                    // The requester may be cancelled while the actor is handling the message.
+                    // A dropped reply receiver does not make successful actor work fail.
+                    let _ = reply.send(outcome);
                     Ok(())
                 }
                 None => {
@@ -118,6 +120,8 @@ pub fn actor_channel<A>() -> (ActorChannelSender<A>, ActorChannelReceiver<A>)
 where
     A: Actor,
 {
+    // Actor mailboxes are deliberately unbounded. Actors process one envelope at a
+    // time, preserving send order for each sender.
     let (tx, rx) = mpsc::unbounded_channel();
     (ActorChannelSender(tx), ActorChannelReceiver(rx))
 }

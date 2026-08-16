@@ -7,7 +7,7 @@ use tokio::io::AsyncWriteExt;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecordFile {
     pub(crate) header: RecordHeader,
-    pub(crate) events: Vec<Event<Box<dyn RecordEvent>>>,
+    pub(crate) events: Vec<RecordedEvent>,
 }
 
 impl RecordFile {
@@ -19,7 +19,7 @@ impl RecordFile {
 #[derive(Debug)]
 pub(crate) struct EventStore {
     header: RecordHeader,
-    events: Vec<Event<Box<dyn RecordEvent>>>,
+    events: Vec<RecordedEvent>,
 }
 
 impl EventStore {
@@ -91,11 +91,11 @@ impl EventStore {
         }
     }
 
-    pub(crate) fn push(&mut self, id: ProxyId, event: Box<dyn RecordEvent>) {
-        self.events.push(Event::new(id, event));
+    pub(crate) fn push(&mut self, event: RecordedEvent) {
+        self.events.push(event);
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = Event<Box<dyn RecordEvent>>> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = RecordedEvent> {
         self.events.iter().cloned()
     }
 }
