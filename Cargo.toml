@@ -2,7 +2,7 @@
 members = [ "macaw-core", "macaw-http", "macaw-ws", "macaw-wasm" ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 authors = [ "Michel Meyer <michel@zazabe.fr>", "Reto Kaiser" ]
 edition = "2024"
 license = "MIT"
