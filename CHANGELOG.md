@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/zazabe/macaw/compare/macaw-v0.2.0...macaw-v0.3.0) (2026-08-16)
+
+
+### Features
+
+* Add actor-based session control server ([#4](https://github.com/zazabe/macaw/issues/4)) ([27954e9](https://github.com/zazabe/macaw/commit/27954e94a7833227a77a4b87743162e3c037d162))
+
 ## [0.2.0](https://github.com/zazabe/macaw/compare/macaw-v0.1.0...macaw-v0.2.0) (2026-08-16)
 
 
