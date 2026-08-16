@@ -34,7 +34,7 @@ jobs:
         with:
           toolchain: 1.97.1
           components: clippy
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: Test
@@ -44,7 +44,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
-      - run: cargo test --workspace --all-targets --all-features
+      - run: cargo test --locked --workspace --all-targets --all-features
 
   wasi-python:
     name: WASI Python
@@ -63,4 +63,4 @@ jobs:
       - name: Test Python component
         env:
           MACAW_WASM_COMPONENT: ${{ github.workspace }}/examples/wasm/python/target/http-auth-plugin-python.wasm
-        run: cargo test --release -p macaw-wasm --test recorder
+        run: cargo test --locked --release -p macaw-wasm --test recorder
