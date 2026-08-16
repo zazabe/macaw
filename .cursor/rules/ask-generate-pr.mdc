@@ -1,0 +1,22 @@
+---
+alwaysApply: true
+---
+
+# Ask task: generate PR text for copy/paste
+
+Apply this rule only when the Ask prompt starts with `gh-pr`.
+
+- Always output PR content inside Markdown code blocks so the user can copy/paste directly.
+- Output exactly two Markdown code blocks and nothing else:
+  1) `title`
+  2) `description`
+- Compare current branch against `main` unless the user specifies another base branch.
+- Keep output minimal, include only what is needed.
+- Title format: `<type>: <concise summary>` where `<type>` is one of `fix`, `refactor`, `chore`, `feat`.
+- Title summary must be sentence case: capitalize only the first word after
+  `<type>:` (example: `refactor: Rebuild the whole project`).
+- Description format:
+  - If short, do not add section headers, return only concise bullet points.
+  - Each bullet point must start with a capital letter.
+  - Add a Mermaid diagram only if the changes are complex and the diagram adds clarity.
+- Do not include labels or label syntax.
