@@ -34,8 +34,15 @@
   ],
   "packages": {
     ".": {
-      "release-type": "rust",
-      "package-name": "macaw"
+      "release-type": "simple",
+      "package-name": "macaw",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        }
+      ]
     }
   }
 }
