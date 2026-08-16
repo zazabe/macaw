@@ -7,6 +7,50 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProfileId(String);
+
+impl ProfileId {
+    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        if value.is_empty() || value.len() > 64 {
+            return Err("profile id must contain between 1 and 64 characters".to_owned());
+        }
+        if matches!(value.as_str(), "." | "..") {
+            return Err("profile id must not be '.' or '..'".to_owned());
+        }
+        if !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err(
+                "profile id may contain only ASCII letters, digits, '-', '_', and '.'".to_owned(),
+            );
+        }
+        Ok(Self(value))
+    }
+}
+
+impl fmt::Display for ProfileId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for ProfileId {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileSnapshot {
+    pub id: ProfileId,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SessionId(Uuid);
@@ -118,6 +162,7 @@ impl SessionEndpoint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub id: SessionId,
+    pub profile_id: ProfileId,
     pub mode: SessionMode,
     pub state: SessionState,
     pub endpoints: BTreeMap<String, SessionEndpoint>,
@@ -189,4 +234,19 @@ fn sanitize(message: String) -> String {
     const MAX_ERROR_LENGTH: usize = 512;
     let normalized = message.replace(['\r', '\n'], " ");
     normalized.chars().take(MAX_ERROR_LENGTH).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProfileId;
+
+    #[test]
+    fn profile_ids_are_safe_for_urls_and_filenames() {
+        for valid in ["local", "payment-api", "staging_v2", "api.example"] {
+            assert!(ProfileId::new(valid).is_ok());
+        }
+        for invalid in ["", ".", "..", "contains space", "contains/slash"] {
+            assert!(ProfileId::new(invalid).is_err());
+        }
+    }
 }

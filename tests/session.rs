@@ -2,7 +2,10 @@
 
 use anyhow::{Context, Result};
 use macaw::http::HttpProxyConfig;
-use macaw::session::{SessionConfig, SessionError, SessionManager, SessionState};
+use macaw::session::{
+    CreateSession, ProfileId, SessionConfig, SessionError, SessionErrorCode, SessionManager,
+    SessionMode, SessionState,
+};
 use std::collections::BTreeMap;
 use std::net::TcpListener;
 
@@ -208,6 +211,92 @@ async fn recording_write_failure_is_reported_as_session_failure() -> Result<()> 
     assert_eq!(stopped.state, SessionState::Failed);
     assert!(stopped.outcome.is_none());
     assert!(stopped.error.is_some());
+
+    manager.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn profile_supports_concurrent_sessions_and_independent_deletion() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let target = upstream().await?;
+    let manager = SessionManager::start();
+    let profile_id = ProfileId::new("shared").unwrap();
+    manager
+        .create_profile(
+            profile_id.clone(),
+            recorder_config(directory.path(), "api", target),
+        )
+        .await?;
+
+    let first = manager
+        .create(CreateSession::new(
+            profile_id.clone(),
+            SessionMode::Record {
+                output: "first.json".into(),
+            },
+        ))
+        .await?;
+    let second = manager
+        .create(CreateSession::new(
+            profile_id.clone(),
+            SessionMode::Record {
+                output: "second.json".into(),
+            },
+        ))
+        .await?;
+    assert_eq!(first.profile_id, profile_id);
+    assert_eq!(second.profile_id, profile_id);
+    assert_ne!(
+        first.endpoints.get("api").unwrap().address,
+        second.endpoints.get("api").unwrap().address
+    );
+    assert_eq!(manager.list_by_profile(profile_id.clone()).await?.len(), 2);
+
+    manager.remove_profile(profile_id.clone()).await?;
+    assert_eq!(manager.get(first.id).await?.state, SessionState::Running);
+    let error = manager
+        .create(CreateSession::new(
+            profile_id,
+            SessionMode::Replay {
+                recording: "missing.json".into(),
+            },
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, SessionErrorCode::NotFound);
+
+    manager.stop_session(first.id).await?;
+    manager.stop_session(second.id).await?;
+    manager.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn profile_validation_defers_mode_specific_requirements_to_session_creation() -> Result<()> {
+    let manager = SessionManager::start();
+    let profile_id = ProfileId::new("replay-only").unwrap();
+    let config = SessionConfig {
+        root: Default::default(),
+        proxies: BTreeMap::from([(
+            "api".to_owned(),
+            Box::new(HttpProxyConfig::replay("127.0.0.1:0")) as Box<dyn macaw::core::ProxyConfig>,
+        )]),
+        debug_tx: None,
+    };
+    manager.create_profile(profile_id.clone(), config).await?;
+
+    let error = manager
+        .create(CreateSession::new(
+            profile_id,
+            SessionMode::Record {
+                output: "recording.json".into(),
+            },
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, SessionErrorCode::InvalidConfig);
+    assert!(manager.list().await?.is_empty());
 
     manager.shutdown().await?;
     Ok(())

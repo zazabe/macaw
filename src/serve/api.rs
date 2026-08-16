@@ -1,6 +1,6 @@
 use super::model::{
-    API_VERSION, CreateSessionRequest, ErrorDetail, ErrorResponse, HealthResponse, ModelError,
-    SessionResponse,
+    API_VERSION, CreateProfileRequest, CreateSessionRequest, ErrorDetail, ErrorResponse,
+    HealthResponse, ModelError, ProfileResponse, SessionResponse,
 };
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -8,7 +8,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use macaw::session::{SessionError, SessionErrorCode, SessionId, SessionManagerHandle};
+use macaw::session::{ProfileId, SessionError, SessionErrorCode, SessionId, SessionManagerHandle};
 use std::time::Duration;
 
 const JSON_BODY_LIMIT: usize = 1024 * 1024;
@@ -18,7 +18,13 @@ const LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(30);
 pub fn router(manager: SessionManagerHandle) -> Router {
     Router::new()
         .route("/v1/health", get(health))
-        .route("/v1/sessions", post(create_session).get(list_sessions))
+        .route("/v1/profiles", post(create_profile).get(list_profiles))
+        .route("/v1/profiles/{id}", get(get_profile).delete(remove_profile))
+        .route(
+            "/v1/profiles/{id}/sessions",
+            post(create_session).get(list_profile_sessions),
+        )
+        .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/{id}", get(get_session).delete(remove_session))
         .route("/v1/sessions/{id}/stop", post(stop_session))
         .fallback(not_found)
@@ -39,10 +45,12 @@ async fn health(
 
 async fn create_session(
     State(manager): State<SessionManagerHandle>,
+    Path(profile_id): Path<String>,
     request: Result<Json<CreateSessionRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    let profile_id = parse_profile_id(&profile_id)?;
     let Json(request) = request.map_err(ApiError::json)?;
-    let request = request.into_actor_request().map_err(ApiError::model)?;
+    let request = request.into_actor_request(profile_id);
     let snapshot = with_timeout(LIFECYCLE_TIMEOUT, manager.create(request)).await?;
     let location = format!("/v1/sessions/{}", snapshot.id);
     let mut response = (StatusCode::CREATED, Json(SessionResponse::from(snapshot))).into_response();
@@ -51,6 +59,65 @@ async fn create_session(
         HeaderValue::from_str(&location).map_err(|_| ApiError::internal())?,
     );
     Ok(response)
+}
+
+async fn create_profile(
+    State(manager): State<SessionManagerHandle>,
+    request: Result<Json<CreateProfileRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Json(request) = request.map_err(ApiError::json)?;
+    let (id, config) = request.into_profile().map_err(ApiError::model)?;
+    let profile = with_timeout(QUERY_TIMEOUT, manager.create_profile(id, config)).await?;
+    let location = format!("/v1/profiles/{}", profile.id);
+    let mut response = (StatusCode::CREATED, Json(ProfileResponse::from(profile))).into_response();
+    response.headers_mut().insert(
+        header::LOCATION,
+        HeaderValue::from_str(&location).map_err(|_| ApiError::internal())?,
+    );
+    Ok(response)
+}
+
+async fn list_profiles(
+    State(manager): State<SessionManagerHandle>,
+) -> Result<Json<Vec<ProfileResponse>>, ApiError> {
+    let profiles = with_timeout(QUERY_TIMEOUT, manager.list_profiles()).await?;
+    Ok(Json(
+        profiles.into_iter().map(ProfileResponse::from).collect(),
+    ))
+}
+
+async fn get_profile(
+    State(manager): State<SessionManagerHandle>,
+    Path(id): Path<String>,
+) -> Result<Json<ProfileResponse>, ApiError> {
+    let profile = with_timeout(QUERY_TIMEOUT, manager.get_profile(parse_profile_id(&id)?)).await?;
+    Ok(Json(ProfileResponse::from(profile)))
+}
+
+async fn remove_profile(
+    State(manager): State<SessionManagerHandle>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    with_timeout(
+        QUERY_TIMEOUT,
+        manager.remove_profile(parse_profile_id(&id)?),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_profile_sessions(
+    State(manager): State<SessionManagerHandle>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<SessionResponse>>, ApiError> {
+    let snapshots = with_timeout(
+        QUERY_TIMEOUT,
+        manager.list_by_profile(parse_profile_id(&id)?),
+    )
+    .await?;
+    Ok(Json(
+        snapshots.into_iter().map(SessionResponse::from).collect(),
+    ))
 }
 
 async fn list_sessions(
@@ -103,6 +170,16 @@ fn parse_id(value: &str) -> Result<SessionId, ApiError> {
             StatusCode::BAD_REQUEST,
             SessionErrorCode::InvalidConfig,
             "invalid session id",
+        )
+    })
+}
+
+fn parse_profile_id(value: &str) -> Result<ProfileId, ApiError> {
+    value.parse().map_err(|message| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            SessionErrorCode::InvalidConfig,
+            message,
         )
     })
 }
@@ -260,6 +337,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sessions_require_an_existing_profile() {
+        let manager = SessionManager::start();
+        let app = router(manager.clone());
+        let request = json!({"mode": {"type": "replay", "recording": "recording.json"}});
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/v1/sessions", request.clone()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/v1/profiles/missing/sessions",
+                request,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn shutdown_state_rejects_new_sessions() {
         let manager = SessionManager::start();
         manager.begin_shutdown().await.unwrap();
@@ -280,9 +382,9 @@ mod tests {
         let response = app
             .oneshot(json_request(
                 "POST",
-                "/v1/sessions",
+                "/v1/profiles",
                 json!({
-                    "mode": {"type": "replay", "recording": "recording.json"},
+                    "id": "late",
                     "proxies": {}
                 }),
             ))
@@ -298,8 +400,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let manager = SessionManager::start();
         let app = router(manager.clone());
-        let create = json!({
-            "mode": {"type": "record", "output": "api.json"},
+        let profile = json!({
+            "id": "example",
             "config_root": directory.path(),
             "proxies": {
                 "api": {
@@ -313,7 +415,41 @@ mod tests {
         });
         let response = app
             .clone()
-            .oneshot(json_request("POST", "/v1/sessions", create))
+            .oneshot(json_request("POST", "/v1/profiles", profile.clone()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.headers()[header::LOCATION], "/v1/profiles/example");
+        let profile_body = response_json(response).await;
+        assert_eq!(profile_body, json!({"id": "example"}));
+        assert!(!profile_body.to_string().contains("target"));
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/v1/profiles", profile))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/profiles")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await, json!([{"id": "example"}]));
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/profiles/example/sessions",
+                json!({"mode": {"type": "record", "output": "api.json"}}),
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -322,6 +458,7 @@ mod tests {
             .unwrap()
             .to_owned();
         let created = response_json(response).await;
+        assert_eq!(created["profile_id"], "example");
         assert_eq!(created["state"], "running");
         assert_eq!(created["proxies"]["api"]["protocol"], "http");
         assert!(
@@ -360,6 +497,32 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .uri("/v1/profiles/example/sessions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let sessions = response_json(response).await;
+        assert_eq!(sessions.as_array().unwrap().len(), 1);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/profiles/example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
                     .method("POST")
                     .uri(format!("{location}/stop"))
                     .body(Body::empty())
@@ -393,9 +556,9 @@ mod tests {
             .clone()
             .oneshot(json_request(
                 "POST",
-                "/v1/sessions",
+                "/v1/profiles",
                 json!({
-                    "mode": {"type": "replay", "recording": "missing.json"},
+                    "id": "invalid",
                     "proxies": {},
                     "secret": "must not be accepted"
                 }),
@@ -410,7 +573,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/v1/sessions")
+                    .uri("/v1/profiles")
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(oversized))
                     .unwrap(),
@@ -428,9 +591,9 @@ mod tests {
         let response = router(manager.clone())
             .oneshot(json_request(
                 "POST",
-                "/v1/sessions",
+                "/v1/profiles",
                 json!({
-                    "mode": {"type": "record", "output": "recording.json"},
+                    "id": "wasm",
                     "proxies": {
                         "api": {
                             "type": "wasm_http",

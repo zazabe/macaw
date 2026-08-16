@@ -1,7 +1,7 @@
 use macaw::core::ProxyConfig;
 use macaw::session::{
-    CreateSession, SessionConfig, SessionEndpoint, SessionError, SessionErrorCode, SessionMode,
-    SessionOutcome, SessionSnapshot, SessionState,
+    CreateSession, ProfileId, ProfileSnapshot, SessionConfig, SessionEndpoint, SessionError,
+    SessionErrorCode, SessionMode, SessionOutcome, SessionSnapshot, SessionState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,6 +14,12 @@ pub const API_VERSION: &str = "v1";
 #[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
     pub mode: ModeRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateProfileRequest {
+    pub id: String,
     #[serde(default)]
     pub config_root: PathBuf,
     pub proxies: BTreeMap<String, ProxyRequest>,
@@ -40,22 +46,15 @@ pub enum ModelError {
     Unsupported(String),
 }
 
-impl CreateSessionRequest {
-    pub fn into_actor_request(self) -> Result<CreateSession, ModelError> {
-        let mode = match self.mode {
-            ModeRequest::Record { output } => SessionMode::Record { output },
-            ModeRequest::Replay { recording } => SessionMode::Replay { recording },
-        };
-        let is_record = matches!(mode, SessionMode::Record { .. });
+impl CreateProfileRequest {
+    pub fn into_profile(self) -> Result<(ProfileId, SessionConfig), ModelError> {
+        let id = self.id.parse().map_err(ModelError::Invalid)?;
         let mut proxies = BTreeMap::new();
-
         for (name, proxy) in self.proxies {
-            let proxy = proxy.into_proxy(is_record)?;
-            proxies.insert(name, proxy);
+            proxies.insert(name, proxy.into_proxy()?);
         }
-
-        Ok(CreateSession::new(
-            mode,
+        Ok((
+            id,
             SessionConfig {
                 root: self.config_root,
                 proxies,
@@ -65,8 +64,18 @@ impl CreateSessionRequest {
     }
 }
 
+impl CreateSessionRequest {
+    pub fn into_actor_request(self, profile_id: ProfileId) -> CreateSession {
+        let mode = match self.mode {
+            ModeRequest::Record { output } => SessionMode::Record { output },
+            ModeRequest::Replay { recording } => SessionMode::Replay { recording },
+        };
+        CreateSession::new(profile_id, mode)
+    }
+}
+
 impl ProxyRequest {
-    fn into_proxy(self, is_record: bool) -> Result<Box<dyn ProxyConfig>, ModelError> {
+    fn into_proxy(self) -> Result<Box<dyn ProxyConfig>, ModelError> {
         let mut config = match self.config {
             Value::Object(config) => config,
             _ => {
@@ -87,7 +96,7 @@ impl ProxyRequest {
                 }
             },
         )?;
-        proxy.validate(is_record).map_err(ModelError::Invalid)?;
+        proxy.validate(false).map_err(ModelError::Invalid)?;
         Ok(proxy)
     }
 }
@@ -100,8 +109,8 @@ mod tests {
     #[cfg(feature = "http")]
     #[test]
     fn opaque_proxy_config_deserializes_through_trait_object() {
-        let request: CreateSessionRequest = serde_json::from_value(json!({
-            "mode": {"type": "record", "output": "recording.json"},
+        let request: CreateProfileRequest = serde_json::from_value(json!({
+            "id": "test",
             "proxies": {
                 "api": {
                     "type": "http",
@@ -113,31 +122,31 @@ mod tests {
             }
         }))
         .unwrap();
-        let request = request.into_actor_request().unwrap();
-        let proxy = request.config.proxies.get("api").unwrap();
+        let (_, config) = request.into_profile().unwrap();
+        let proxy = config.proxies.get("api").unwrap();
         assert_eq!(proxy.protocol(), "http");
         assert_eq!(proxy.target(), Some("https://example.com"));
     }
 
     #[test]
     fn proxy_envelope_rejects_non_object_config() {
-        let request: CreateSessionRequest = serde_json::from_value(json!({
-            "mode": {"type": "replay", "recording": "recording.json"},
+        let request: CreateProfileRequest = serde_json::from_value(json!({
+            "id": "test",
             "proxies": {
                 "api": {"type": "anything", "config": "not-an-object"}
             }
         }))
         .unwrap();
         assert!(matches!(
-            request.into_actor_request(),
+            request.into_profile(),
             Err(ModelError::Invalid(_))
         ));
     }
 
     #[test]
     fn proxy_envelope_rejects_unknown_fields() {
-        let result = serde_json::from_value::<CreateSessionRequest>(json!({
-            "mode": {"type": "replay", "recording": "recording.json"},
+        let result = serde_json::from_value::<CreateProfileRequest>(json!({
+            "id": "test",
             "proxies": {
                 "api": {
                     "type": "anything",
@@ -158,8 +167,20 @@ pub struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ProfileResponse {
+    pub id: ProfileId,
+}
+
+impl From<ProfileSnapshot> for ProfileResponse {
+    fn from(profile: ProfileSnapshot) -> Self {
+        Self { id: profile.id }
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub struct SessionResponse {
     pub id: macaw::session::SessionId,
+    pub profile_id: ProfileId,
     pub mode: ModeResponse,
     pub state: SessionState,
     pub proxies: BTreeMap<String, SessionEndpoint>,
@@ -210,6 +231,7 @@ impl From<SessionSnapshot> for SessionResponse {
         });
         Self {
             id: snapshot.id,
+            profile_id: snapshot.profile_id,
             mode,
             state: snapshot.state,
             proxies: snapshot.endpoints,

@@ -1,6 +1,6 @@
 use super::{
-    GetSessionStatus, SessionActor, SessionConfig, SessionError, SessionErrorCode, SessionId,
-    SessionMode, SessionSnapshot, StopSession,
+    GetSessionStatus, ProfileId, ProfileSnapshot, SessionActor, SessionConfig, SessionError,
+    SessionErrorCode, SessionId, SessionMode, SessionSnapshot, StopSession,
 };
 use macaw_core::prelude::*;
 use std::collections::HashMap;
@@ -9,18 +9,42 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct CreateSession {
     pub id: Option<SessionId>,
+    pub profile_id: ProfileId,
     pub mode: SessionMode,
-    pub config: SessionConfig,
 }
 
 impl CreateSession {
-    pub fn new(mode: SessionMode, config: SessionConfig) -> Self {
+    pub fn new(profile_id: ProfileId, mode: SessionMode) -> Self {
         Self {
             id: None,
+            profile_id,
             mode,
-            config,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateProfile {
+    pub id: ProfileId,
+    pub config: SessionConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetProfile {
+    pub id: ProfileId,
+}
+
+#[derive(Debug)]
+pub struct ListProfiles;
+
+#[derive(Debug, Clone)]
+pub struct RemoveProfile {
+    pub id: ProfileId,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListSessionsByProfile {
+    pub profile_id: ProfileId,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +77,7 @@ pub struct GetManagerReadiness;
 #[derive(Debug)]
 pub struct SessionManager {
     context: ActorContext,
+    profiles: HashMap<ProfileId, SessionConfig>,
     sessions: HashMap<SessionId, ActorHandle<SessionActor>>,
     accepting_sessions: bool,
 }
@@ -71,6 +96,7 @@ impl SessionManager {
         let actor_system = ActorSystem::new();
         let actor = Self {
             context: actor_system.actor_context("session-manager"),
+            profiles: HashMap::new(),
             sessions: HashMap::new(),
             accepting_sessions: true,
         }
@@ -111,13 +137,35 @@ impl SessionManagerHandle {
         output: impl Into<PathBuf>,
         config: SessionConfig,
     ) -> Result<SessionSnapshot, SessionError> {
+        let profile_id = transient_profile_id();
+        self.create_profile(profile_id.clone(), config).await?;
         self.request(CreateSession::new(
+            profile_id,
             SessionMode::Record {
                 output: output.into(),
             },
-            config,
         ))
         .await?
+    }
+
+    pub async fn create_profile(
+        &self,
+        id: ProfileId,
+        config: SessionConfig,
+    ) -> Result<ProfileSnapshot, SessionError> {
+        self.request(CreateProfile { id, config }).await?
+    }
+
+    pub async fn get_profile(&self, id: ProfileId) -> Result<ProfileSnapshot, SessionError> {
+        self.request(GetProfile { id }).await?
+    }
+
+    pub async fn list_profiles(&self) -> Result<Vec<ProfileSnapshot>, SessionError> {
+        self.request(ListProfiles).await
+    }
+
+    pub async fn remove_profile(&self, id: ProfileId) -> Result<(), SessionError> {
+        self.request(RemoveProfile { id }).await?
     }
 
     pub async fn create(&self, request: CreateSession) -> Result<SessionSnapshot, SessionError> {
@@ -129,11 +177,13 @@ impl SessionManagerHandle {
         recording: impl Into<PathBuf>,
         config: SessionConfig,
     ) -> Result<SessionSnapshot, SessionError> {
+        let profile_id = transient_profile_id();
+        self.create_profile(profile_id.clone(), config).await?;
         self.request(CreateSession::new(
+            profile_id,
             SessionMode::Replay {
                 recording: recording.into(),
             },
-            config,
         ))
         .await?
     }
@@ -144,6 +194,13 @@ impl SessionManagerHandle {
 
     pub async fn list(&self) -> Result<Vec<SessionSnapshot>, SessionError> {
         self.request(ListSessions).await?
+    }
+
+    pub async fn list_by_profile(
+        &self,
+        profile_id: ProfileId,
+    ) -> Result<Vec<SessionSnapshot>, SessionError> {
+        self.request(ListSessionsByProfile { profile_id }).await?
     }
 
     pub async fn stop_session(&self, id: SessionId) -> Result<SessionSnapshot, SessionError> {
@@ -175,6 +232,11 @@ impl SessionManagerHandle {
     }
 }
 
+fn transient_profile_id() -> ProfileId {
+    ProfileId::new(format!("cli-{}", SessionId::new()))
+        .expect("generated transient profile id must be valid")
+}
+
 impl Actor for SessionManager {
     fn context(&self) -> &ActorContext {
         &self.context
@@ -187,6 +249,73 @@ impl Actor for SessionManager {
             handle.stop();
             let _ = handle.wait().await;
         }
+    }
+}
+
+impl ActorHandler<CreateProfile> for SessionManager {
+    type Reply = Result<ProfileSnapshot, SessionError>;
+
+    async fn handle(&mut self, request: CreateProfile) -> Self::Reply {
+        if !self.accepting_sessions {
+            return Err(SessionError::new(
+                SessionErrorCode::ShuttingDown,
+                "session manager is shutting down",
+            ));
+        }
+        if self.profiles.contains_key(&request.id) {
+            return Err(SessionError::new(
+                SessionErrorCode::Duplicate,
+                format!("profile {} already exists", request.id),
+            ));
+        }
+        SessionActor::validate_profile(&request.config)?;
+        let snapshot = ProfileSnapshot {
+            id: request.id.clone(),
+        };
+        self.profiles.insert(request.id, request.config);
+        Ok(snapshot)
+    }
+}
+
+impl ActorHandler<GetProfile> for SessionManager {
+    type Reply = Result<ProfileSnapshot, SessionError>;
+
+    async fn handle(&mut self, request: GetProfile) -> Self::Reply {
+        self.profiles
+            .contains_key(&request.id)
+            .then_some(ProfileSnapshot { id: request.id })
+            .ok_or_else(|| SessionError::new(SessionErrorCode::NotFound, "profile not found"))
+    }
+}
+
+impl ActorHandler<ListProfiles> for SessionManager {
+    type Reply = Vec<ProfileSnapshot>;
+
+    async fn handle(&mut self, _request: ListProfiles) -> Self::Reply {
+        let mut profiles = self
+            .profiles
+            .keys()
+            .cloned()
+            .map(|id| ProfileSnapshot { id })
+            .collect::<Vec<_>>();
+        profiles.sort_by_key(|profile| profile.id.to_string());
+        profiles
+    }
+}
+
+impl ActorHandler<RemoveProfile> for SessionManager {
+    type Reply = Result<(), SessionError>;
+
+    async fn handle(&mut self, request: RemoveProfile) -> Self::Reply {
+        self.profiles
+            .remove(&request.id)
+            .map(|_| ())
+            .ok_or_else(|| {
+                SessionError::new(
+                    SessionErrorCode::NotFound,
+                    format!("profile {} not found", request.id),
+                )
+            })
     }
 }
 
@@ -207,7 +336,18 @@ impl ActorHandler<CreateSession> for SessionManager {
                 format!("session {id} already exists"),
             ));
         }
-        let (handle, snapshot) = SessionActor::start(id, request.mode, request.config).await?;
+        let config = self
+            .profiles
+            .get(&request.profile_id)
+            .cloned()
+            .ok_or_else(|| {
+                SessionError::new(
+                    SessionErrorCode::NotFound,
+                    format!("profile {} not found", request.profile_id),
+                )
+            })?;
+        let (handle, snapshot) =
+            SessionActor::start(id, request.profile_id, request.mode, config).await?;
         if self.sessions.insert(id, handle).is_some() {
             return Err(SessionError::new(
                 SessionErrorCode::Duplicate,
@@ -240,6 +380,29 @@ impl ActorHandler<ListSessions> for SessionManager {
         let mut snapshots = Vec::with_capacity(handles.len());
         for handle in handles {
             snapshots.push(Self::snapshot(&handle).await?);
+        }
+        snapshots.sort_by_key(|snapshot| snapshot.id.to_string());
+        Ok(snapshots)
+    }
+}
+
+impl ActorHandler<ListSessionsByProfile> for SessionManager {
+    type Reply = Result<Vec<SessionSnapshot>, SessionError>;
+
+    async fn handle(&mut self, request: ListSessionsByProfile) -> Self::Reply {
+        if !self.profiles.contains_key(&request.profile_id) {
+            return Err(SessionError::new(
+                SessionErrorCode::NotFound,
+                format!("profile {} not found", request.profile_id),
+            ));
+        }
+        let handles = self.sessions.values().cloned().collect::<Vec<_>>();
+        let mut snapshots = Vec::new();
+        for handle in handles {
+            let snapshot = Self::snapshot(&handle).await?;
+            if snapshot.profile_id == request.profile_id {
+                snapshots.push(snapshot);
+            }
         }
         snapshots.sort_by_key(|snapshot| snapshot.id.to_string());
         Ok(snapshots)

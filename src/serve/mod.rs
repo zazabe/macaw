@@ -1,5 +1,6 @@
 mod api;
 mod model;
+mod profiles;
 mod transport;
 
 use anyhow::{Context, Result, bail};
@@ -23,6 +24,10 @@ pub struct ServeArgs {
     /// Unix socket path for the HTTP control API
     #[arg(long, value_name = "PATH", conflicts_with = "tcp")]
     unix: Option<PathBuf>,
+
+    /// Load immutable startup profiles from TOML files in this directory
+    #[arg(long, value_name = "DIRECTORY")]
+    profiles_dir: Option<PathBuf>,
 }
 
 pub async fn run(args: ServeArgs) -> Result<()> {
@@ -33,10 +38,19 @@ async fn run_until(
     args: ServeArgs,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
-    let listener = bind(args).await?;
+    let profiles = args
+        .profiles_dir
+        .as_deref()
+        .map(profiles::load_directory)
+        .transpose()?
+        .unwrap_or_default();
+    let manager = SessionManager::start();
+    for (id, config) in profiles {
+        manager.create_profile(id, config).await?;
+    }
+    let listener = bind(&args).await?;
     eprintln!("macaw control server listening on {}", listener.address());
 
-    let manager = SessionManager::start();
     let app = api::router(manager.clone());
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let mut server = tokio::spawn(listener.serve(app, async move {
@@ -76,11 +90,11 @@ async fn run_until(
     Ok(())
 }
 
-async fn bind(args: ServeArgs) -> Result<BoundControlListener> {
-    if let Some(path) = args.unix {
+async fn bind(args: &ServeArgs) -> Result<BoundControlListener> {
+    if let Some(path) = &args.unix {
         #[cfg(unix)]
         {
-            return BoundControlListener::unix(&path);
+            return BoundControlListener::unix(path);
         }
         #[cfg(not(unix))]
         {

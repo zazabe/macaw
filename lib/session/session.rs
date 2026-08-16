@@ -1,6 +1,6 @@
 use super::{
-    SessionConfig, SessionEndpoint, SessionError, SessionId, SessionMode, SessionOutcome,
-    SessionSnapshot, SessionState,
+    ProfileId, SessionConfig, SessionEndpoint, SessionError, SessionId, SessionMode,
+    SessionOutcome, SessionSnapshot, SessionState,
 };
 use macaw_core::prelude::*;
 use std::collections::BTreeMap;
@@ -23,6 +23,7 @@ struct SessionFailed(SessionError);
 pub struct SessionActor {
     context: ActorContext,
     id: SessionId,
+    profile_id: ProfileId,
     mode: SessionMode,
     state: SessionState,
     endpoints: BTreeMap<String, SessionEndpoint>,
@@ -33,8 +34,13 @@ pub struct SessionActor {
 }
 
 impl SessionActor {
+    pub(crate) fn validate_profile(config: &SessionConfig) -> Result<(), SessionError> {
+        validate_profile(config)
+    }
+
     pub(crate) async fn start(
         id: SessionId,
+        profile_id: ProfileId,
         mode: SessionMode,
         mut config: SessionConfig,
     ) -> Result<(ActorHandle<Self>, SessionSnapshot), SessionError> {
@@ -49,6 +55,7 @@ impl SessionActor {
         let actor = Self {
             context,
             id,
+            profile_id,
             mode,
             state: SessionState::Running,
             endpoints: completion_future.endpoints,
@@ -79,6 +86,7 @@ impl SessionActor {
     fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             id: self.id,
+            profile_id: self.profile_id.clone(),
             mode: self.mode.clone(),
             state: self.state,
             endpoints: self.endpoints.clone(),
@@ -249,6 +257,16 @@ async fn start_runtime(
 }
 
 fn validate(mode: &SessionMode, config: &SessionConfig) -> Result<(), SessionError> {
+    validate_profile(config)?;
+    for (name, proxy) in &config.proxies {
+        proxy
+            .validate(matches!(mode, SessionMode::Record { .. }))
+            .map_err(|message| SessionError::invalid(format!("proxy {name}: {message}")))?;
+    }
+    Ok(())
+}
+
+fn validate_profile(config: &SessionConfig) -> Result<(), SessionError> {
     if config.proxies.is_empty() {
         return Err(SessionError::invalid("at least one proxy is required"));
     }
@@ -260,7 +278,7 @@ fn validate(mode: &SessionMode, config: &SessionConfig) -> Result<(), SessionErr
             .parse::<SocketAddr>()
             .map_err(|_| SessionError::invalid(format!("invalid bind address for proxy {name}")))?;
         proxy
-            .validate(matches!(mode, SessionMode::Record { .. }))
+            .validate(false)
             .map_err(|message| SessionError::invalid(format!("proxy {name}: {message}")))?;
     }
     Ok(())
