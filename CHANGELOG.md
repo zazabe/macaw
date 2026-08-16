@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/zazabe/macaw/compare/macaw-v0.3.0...macaw-v0.3.1) (2026-08-16)
+
+
+### Chores
+
+* update macaw dependencies to version 0.3.0 in Cargo.lock ([#6](https://github.com/zazabe/macaw/issues/6)) ([00fbdbd](https://github.com/zazabe/macaw/commit/00fbdbd593c216b40668aa0a7bc841f4fd141ccf))
+
 ## [0.3.0](https://github.com/zazabe/macaw/compare/macaw-v0.2.0...macaw-v0.3.0) (2026-08-16)
 
 
