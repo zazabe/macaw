@@ -3,6 +3,7 @@ use std::pin::Pin;
 use crate::lib::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HttpProxyConfig {
     #[serde(default = "default_bind")]
     bind: String,
@@ -41,6 +42,14 @@ fn default_bind() -> String {
 
 #[typetag::serde(name = "http")]
 impl ProxyConfig for HttpProxyConfig {
+    fn protocol(&self) -> &'static str {
+        "http"
+    }
+
+    fn validate(&self, recording: bool) -> Result<(), String> {
+        validate_target(self.target.as_deref(), recording, &["http", "https"])
+    }
+
     fn bind(&self) -> &str {
         &self.bind
     }
@@ -97,6 +106,25 @@ impl ProxyConfig for HttpProxyConfig {
             Ok(addr)
         })
     }
+}
+
+fn validate_target(
+    target: Option<&str>,
+    required: bool,
+    allowed_schemes: &[&str],
+) -> Result<(), String> {
+    let Some(target) = target.filter(|target| !target.is_empty()) else {
+        return if required {
+            Err("recording proxy requires a target".to_owned())
+        } else {
+            Ok(())
+        };
+    };
+    let target = url::Url::parse(target).map_err(|_| "invalid HTTP proxy target".to_owned())?;
+    if !allowed_schemes.contains(&target.scheme()) || target.host_str().is_none() {
+        return Err("invalid HTTP proxy target".to_owned());
+    }
+    Ok(())
 }
 
 fn load_overrides(path: Option<&str>) -> Result<Box<dyn HttpOverride>, anyhow::Error> {

@@ -4,6 +4,7 @@ mod config;
 mod debug;
 mod record;
 mod replay;
+mod serve;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -35,6 +36,8 @@ enum Commands {
         /// Path to recording file
         recording_file: PathBuf,
     },
+    /// Run the versioned HTTP control server
+    Serve(serve::ServeArgs),
 }
 
 #[tokio::main]
@@ -55,6 +58,9 @@ async fn main() -> Result<()> {
         }
         Commands::Replay { recording_file } => {
             replay::run(config, &recording_file, debug).await?;
+        }
+        Commands::Serve(args) => {
+            serve::run(args).await?;
         }
     }
 

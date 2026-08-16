@@ -20,6 +20,7 @@ macaw-http = { path = "../macaw-http" }
 serde_json.workspace = true
 serde.workspace = true
 typetag.workspace = true
+url.workspace = true
 dyn-clonable.workspace = true
 uuid.workspace = true
 wasmtime.workspace = true

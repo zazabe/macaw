@@ -3,6 +3,7 @@ use std::pin::Pin;
 use crate::lib::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WsProxyConfig {
     #[serde(default = "default_bind")]
     bind: String,
@@ -41,6 +42,26 @@ fn default_bind() -> String {
 
 #[typetag::serde(name = "ws")]
 impl ProxyConfig for WsProxyConfig {
+    fn protocol(&self) -> &'static str {
+        "ws"
+    }
+
+    fn validate(&self, recording: bool) -> Result<(), String> {
+        let Some(target) = self.target.as_deref().filter(|target| !target.is_empty()) else {
+            return if recording {
+                Err("recording proxy requires a target".to_owned())
+            } else {
+                Ok(())
+            };
+        };
+        let target =
+            url::Url::parse(target).map_err(|_| "invalid WebSocket proxy target".to_owned())?;
+        if !matches!(target.scheme(), "ws" | "wss") || target.host_str().is_none() {
+            return Err("invalid WebSocket proxy target".to_owned());
+        }
+        Ok(())
+    }
+
     fn bind(&self) -> &str {
         &self.bind
     }

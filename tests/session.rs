@@ -70,10 +70,11 @@ async fn recorder_sessions_stop_independently_and_release_ports() -> Result<()> 
         )
         .await?;
 
-    let first_endpoint = *first
+    let first_endpoint = first
         .endpoints
         .get("first")
-        .context("first proxy endpoint missing")?;
+        .context("first proxy endpoint missing")?
+        .address;
     let stopped = manager.stop_session(first.id).await?;
     assert_eq!(stopped.state, SessionState::Stopped);
     assert!(directory.path().join("first.json").exists());
@@ -81,10 +82,11 @@ async fn recorder_sessions_stop_independently_and_release_ports() -> Result<()> 
 
     let second_status = manager.get(second.id).await?;
     assert_eq!(second_status.state, SessionState::Running);
-    let second_endpoint = *second
+    let second_endpoint = second
         .endpoints
         .get("second")
-        .context("second proxy endpoint missing")?;
+        .context("second proxy endpoint missing")?
+        .address;
     assert!(TcpListener::bind(second_endpoint).is_err());
 
     manager.stop_session(second.id).await?;
@@ -176,10 +178,11 @@ async fn manager_shutdown_waits_for_recording_flush() -> Result<()> {
             recorder_config(directory.path(), "proxy", target),
         )
         .await?;
-    let endpoint = *session
+    let endpoint = session
         .endpoints
         .get("proxy")
-        .context("proxy endpoint missing")?;
+        .context("proxy endpoint missing")?
+        .address;
 
     manager.shutdown().await?;
 

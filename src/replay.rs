@@ -26,7 +26,11 @@ pub async fn run(config_path: &Path, recording_path: &Path, debug_mode: bool) ->
     let snapshot = manager
         .replay(recording_path, config.session_config(debug_tx))
         .await?;
-    let bindings = snapshot.endpoints.clone().into_iter().collect();
+    let bindings = snapshot
+        .endpoints
+        .iter()
+        .map(|(name, endpoint)| (name.clone(), endpoint.address))
+        .collect();
     debug::print_replay_summary(&config.proxies, &bindings);
 
     let mut sig_int = SignalStream::new(signal(SignalKind::interrupt())?);

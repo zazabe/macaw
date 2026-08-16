@@ -15,6 +15,7 @@ use crate::http::WasmHttpPlugin;
 
 /// HTTP proxy configuration backed by an isolated WASM component instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WasmHttpProxyConfig {
     #[serde(default = "default_bind")]
     bind: String,
@@ -74,6 +75,25 @@ fn default_bind() -> String {
 
 #[typetag::serde(name = "wasm_http")]
 impl ProxyConfig for WasmHttpProxyConfig {
+    fn protocol(&self) -> &'static str {
+        "http"
+    }
+
+    fn validate(&self, recording: bool) -> Result<(), String> {
+        let Some(target) = self.target.as_deref().filter(|target| !target.is_empty()) else {
+            return if recording {
+                Err("recording proxy requires a target".to_owned())
+            } else {
+                Ok(())
+            };
+        };
+        let target = url::Url::parse(target).map_err(|_| "invalid HTTP proxy target".to_owned())?;
+        if !matches!(target.scheme(), "http" | "https") || target.host_str().is_none() {
+            return Err("invalid HTTP proxy target".to_owned());
+        }
+        Ok(())
+    }
+
     fn bind(&self) -> &str {
         &self.bind
     }

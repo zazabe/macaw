@@ -5,6 +5,16 @@ use crate::lib::*;
 #[dyn_clonable::clonable]
 #[typetag::serde(tag = "type")]
 pub trait ProxyConfig: Clone + Send + Sync {
+    /// Protocol exposed by this proxy (for example `http` or `ws`).
+    fn protocol(&self) -> &'static str;
+
+    fn validate(&self, recording: bool) -> Result<(), String> {
+        if recording && self.target().is_none_or(str::is_empty) {
+            return Err("recording proxy requires a target".to_owned());
+        }
+        Ok(())
+    }
+
     fn bind(&self) -> &str;
 
     fn target(&self) -> Option<&str>;

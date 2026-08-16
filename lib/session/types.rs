@@ -97,11 +97,30 @@ impl SessionState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionEndpoint {
+    pub protocol: String,
+    pub address: SocketAddr,
+    pub url: String,
+}
+
+impl SessionEndpoint {
+    pub(crate) fn new(protocol: impl Into<String>, address: SocketAddr) -> Self {
+        let protocol = protocol.into();
+        let url = format!("{protocol}://{address}");
+        Self {
+            protocol,
+            address,
+            url,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub id: SessionId,
     pub mode: SessionMode,
     pub state: SessionState,
-    pub endpoints: BTreeMap<String, SocketAddr>,
+    pub endpoints: BTreeMap<String, SessionEndpoint>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<SessionOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,6 +149,8 @@ pub enum SessionErrorCode {
     Duplicate,
     NotTerminal,
     ActorUnavailable,
+    Unsupported,
+    ShuttingDown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]

@@ -45,9 +45,16 @@ pub struct RemoveSession {
 pub struct StopAllSessions;
 
 #[derive(Debug)]
+pub struct BeginShutdown;
+
+#[derive(Debug)]
+pub struct GetManagerReadiness;
+
+#[derive(Debug)]
 pub struct SessionManager {
     context: ActorContext,
     sessions: HashMap<SessionId, ActorHandle<SessionActor>>,
+    accepting_sessions: bool,
 }
 
 /// Typed façade over the session-manager actor.
@@ -65,6 +72,7 @@ impl SessionManager {
         let actor = Self {
             context: actor_system.actor_context("session-manager"),
             sessions: HashMap::new(),
+            accepting_sessions: true,
         }
         .run();
         SessionManagerHandle { actor }
@@ -112,6 +120,10 @@ impl SessionManagerHandle {
         .await?
     }
 
+    pub async fn create(&self, request: CreateSession) -> Result<SessionSnapshot, SessionError> {
+        self.request(request).await?
+    }
+
     pub async fn replay(
         &self,
         recording: impl Into<PathBuf>,
@@ -131,7 +143,7 @@ impl SessionManagerHandle {
     }
 
     pub async fn list(&self) -> Result<Vec<SessionSnapshot>, SessionError> {
-        self.request(ListSessions).await
+        self.request(ListSessions).await?
     }
 
     pub async fn stop_session(&self, id: SessionId) -> Result<SessionSnapshot, SessionError> {
@@ -146,6 +158,14 @@ impl SessionManagerHandle {
         &self,
     ) -> Result<Vec<Result<SessionSnapshot, SessionError>>, SessionError> {
         self.request(StopAllSessions).await
+    }
+
+    pub async fn begin_shutdown(&self) -> Result<(), SessionError> {
+        self.request(BeginShutdown).await
+    }
+
+    pub async fn is_ready(&self) -> Result<bool, SessionError> {
+        self.request(GetManagerReadiness).await
     }
 
     /// Gracefully stop all sessions and await manager completion.
@@ -174,6 +194,12 @@ impl ActorHandler<CreateSession> for SessionManager {
     type Reply = Result<SessionSnapshot, SessionError>;
 
     async fn handle(&mut self, request: CreateSession) -> Self::Reply {
+        if !self.accepting_sessions {
+            return Err(SessionError::new(
+                SessionErrorCode::ShuttingDown,
+                "session manager is shutting down",
+            ));
+        }
         let id = request.id.unwrap_or_default();
         if self.sessions.contains_key(&id) {
             return Err(SessionError::new(
@@ -207,18 +233,16 @@ impl ActorHandler<GetSession> for SessionManager {
 }
 
 impl ActorHandler<ListSessions> for SessionManager {
-    type Reply = Vec<SessionSnapshot>;
+    type Reply = Result<Vec<SessionSnapshot>, SessionError>;
 
     async fn handle(&mut self, _request: ListSessions) -> Self::Reply {
         let handles = self.sessions.values().cloned().collect::<Vec<_>>();
         let mut snapshots = Vec::with_capacity(handles.len());
         for handle in handles {
-            if let Ok(snapshot) = Self::snapshot(&handle).await {
-                snapshots.push(snapshot);
-            }
+            snapshots.push(Self::snapshot(&handle).await?);
         }
         snapshots.sort_by_key(|snapshot| snapshot.id.to_string());
-        snapshots
+        Ok(snapshots)
     }
 }
 
@@ -265,11 +289,28 @@ impl ActorHandler<StopAllSessions> for SessionManager {
     type Reply = Vec<Result<SessionSnapshot, SessionError>>;
 
     async fn handle(&mut self, _request: StopAllSessions) -> Self::Reply {
+        self.accepting_sessions = false;
         let handles = self.sessions.values().cloned().collect::<Vec<_>>();
         let mut outcomes = Vec::with_capacity(handles.len());
         for handle in handles {
             outcomes.push(Self::stop(&handle).await);
         }
         outcomes
+    }
+}
+
+impl ActorHandler<BeginShutdown> for SessionManager {
+    type Reply = ();
+
+    async fn handle(&mut self, _request: BeginShutdown) {
+        self.accepting_sessions = false;
+    }
+}
+
+impl ActorHandler<GetManagerReadiness> for SessionManager {
+    type Reply = bool;
+
+    async fn handle(&mut self, _request: GetManagerReadiness) -> Self::Reply {
+        self.accepting_sessions
     }
 }

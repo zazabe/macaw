@@ -33,6 +33,7 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 typetag.workspace = true
+url.workspace = true
 uuid.workspace = true
 pin-project-lite.workspace = true
 take_mut.workspace = true

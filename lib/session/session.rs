@@ -1,6 +1,6 @@
 use super::{
-    SessionConfig, SessionError, SessionId, SessionMode, SessionOutcome, SessionSnapshot,
-    SessionState,
+    SessionConfig, SessionEndpoint, SessionError, SessionId, SessionMode, SessionOutcome,
+    SessionSnapshot, SessionState,
 };
 use macaw_core::prelude::*;
 use std::collections::BTreeMap;
@@ -25,7 +25,7 @@ pub struct SessionActor {
     id: SessionId,
     mode: SessionMode,
     state: SessionState,
-    endpoints: BTreeMap<String, SocketAddr>,
+    endpoints: BTreeMap<String, SessionEndpoint>,
     outcome: Option<SessionOutcome>,
     error: Option<SessionError>,
     runtime_exit: AppExitHandle,
@@ -176,7 +176,7 @@ impl ActorHandler<SessionFailed> for SessionActor {
 }
 
 struct RuntimeCompletion {
-    endpoints: BTreeMap<String, SocketAddr>,
+    endpoints: BTreeMap<String, SessionEndpoint>,
     future: std::pin::Pin<
         Box<dyn Future<Output = Result<SessionOutcome, SessionError>> + Send + 'static>,
     >,
@@ -259,11 +259,9 @@ fn validate(mode: &SessionMode, config: &SessionConfig) -> Result<(), SessionErr
             .bind()
             .parse::<SocketAddr>()
             .map_err(|_| SessionError::invalid(format!("invalid bind address for proxy {name}")))?;
-        if matches!(mode, SessionMode::Record { .. }) && proxy.target().is_none_or(str::is_empty) {
-            return Err(SessionError::invalid(format!(
-                "recording proxy {name} requires a target"
-            )));
-        }
+        proxy
+            .validate(matches!(mode, SessionMode::Record { .. }))
+            .map_err(|message| SessionError::invalid(format!("proxy {name}: {message}")))?;
     }
     Ok(())
 }
@@ -271,7 +269,7 @@ fn validate(mode: &SessionMode, config: &SessionConfig) -> Result<(), SessionErr
 async fn bind_recorder(
     runtime: &mut Macaw<Recorder>,
     config: &SessionConfig,
-) -> Result<BTreeMap<String, SocketAddr>, SessionError> {
+) -> Result<BTreeMap<String, SessionEndpoint>, SessionError> {
     let mut endpoints = BTreeMap::new();
     for (name, proxy) in &config.proxies {
         let endpoint = proxy
@@ -280,7 +278,10 @@ async fn bind_recorder(
             .map_err(|error| {
                 SessionError::startup(format!("failed to bind proxy {name}: {error}"))
             })?;
-        endpoints.insert(name.clone(), endpoint);
+        endpoints.insert(
+            name.clone(),
+            SessionEndpoint::new(proxy.protocol(), endpoint),
+        );
     }
     Ok(endpoints)
 }
@@ -288,7 +289,7 @@ async fn bind_recorder(
 async fn bind_replayer(
     runtime: &mut Macaw<Replayer>,
     config: &SessionConfig,
-) -> Result<BTreeMap<String, SocketAddr>, SessionError> {
+) -> Result<BTreeMap<String, SessionEndpoint>, SessionError> {
     let mut endpoints = BTreeMap::new();
     for (name, proxy) in &config.proxies {
         let endpoint = proxy
@@ -297,7 +298,10 @@ async fn bind_replayer(
             .map_err(|error| {
                 SessionError::startup(format!("failed to bind proxy {name}: {error}"))
             })?;
-        endpoints.insert(name.clone(), endpoint);
+        endpoints.insert(
+            name.clone(),
+            SessionEndpoint::new(proxy.protocol(), endpoint),
+        );
     }
     Ok(endpoints)
 }
