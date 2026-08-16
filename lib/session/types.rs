@@ -49,6 +49,16 @@ impl FromStr for ProfileId {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileSnapshot {
     pub id: ProfileId,
+    pub config_root: PathBuf,
+    pub proxies: BTreeMap<String, ProfileProxySnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileProxySnapshot {
+    pub protocol: String,
+    pub bind: String,
+    pub target: Option<String>,
+    pub overrides: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -78,6 +88,42 @@ impl FromStr for SessionId {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         value.parse().map(Self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionName(String);
+
+impl SessionName {
+    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        if value.is_empty() || value.len() > 64 {
+            return Err("session name must contain between 1 and 64 characters".to_owned());
+        }
+        if !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err(
+                "session name may contain only ASCII letters, digits, '-', '_', and '.'".to_owned(),
+            );
+        }
+        Ok(Self(value))
+    }
+}
+
+impl fmt::Display for SessionName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for SessionName {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
     }
 }
 
@@ -162,6 +208,8 @@ impl SessionEndpoint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub id: SessionId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<SessionName>,
     pub profile_id: ProfileId,
     pub mode: SessionMode,
     pub state: SessionState,
@@ -238,7 +286,7 @@ fn sanitize(message: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::ProfileId;
+    use super::{ProfileId, SessionName};
 
     #[test]
     fn profile_ids_are_safe_for_urls_and_filenames() {
@@ -247,6 +295,16 @@ mod tests {
         }
         for invalid in ["", ".", "..", "contains space", "contains/slash"] {
             assert!(ProfileId::new(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn session_names_are_short_and_cli_safe() {
+        for valid in ["checkout", "record-1", "replay_test", "api.example"] {
+            assert!(SessionName::new(valid).is_ok());
+        }
+        for invalid in ["", "contains space", "contains/slash"] {
+            assert!(SessionName::new(invalid).is_err());
         }
     }
 }

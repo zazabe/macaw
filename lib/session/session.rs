@@ -1,17 +1,22 @@
 use super::{
-    ProfileId, SessionConfig, SessionEndpoint, SessionError, SessionId, SessionMode,
+    ProfileId, SessionConfig, SessionEndpoint, SessionError, SessionId, SessionMode, SessionName,
     SessionOutcome, SessionSnapshot, SessionState,
 };
 use macaw_core::prelude::*;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
+
+const TRAFFIC_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Debug)]
 pub struct GetSessionStatus;
 
 #[derive(Debug)]
 pub struct StopSession;
+
+#[derive(Debug)]
+pub struct SubscribeSessionTraffic;
 
 #[derive(Debug)]
 struct SessionCompleted(SessionOutcome);
@@ -23,6 +28,7 @@ struct SessionFailed(SessionError);
 pub struct SessionActor {
     context: ActorContext,
     id: SessionId,
+    name: Option<SessionName>,
     profile_id: ProfileId,
     mode: SessionMode,
     state: SessionState,
@@ -31,6 +37,7 @@ pub struct SessionActor {
     error: Option<SessionError>,
     runtime_exit: AppExitHandle,
     completion: watch::Receiver<Option<Result<SessionOutcome, SessionError>>>,
+    traffic_tx: Option<broadcast::Sender<RecordedEvent>>,
 }
 
 impl SessionActor {
@@ -40,12 +47,18 @@ impl SessionActor {
 
     pub(crate) async fn start(
         id: SessionId,
+        name: Option<SessionName>,
         profile_id: ProfileId,
         mode: SessionMode,
         mut config: SessionConfig,
     ) -> Result<(ActorHandle<Self>, SessionSnapshot), SessionError> {
         config.resolve_proxy_paths();
         validate(&mode, &config)?;
+        let external_debug_tx = config.debug_tx.take();
+        let (debug_tx, mut debug_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (traffic_tx, _) = broadcast::channel(TRAFFIC_CHANNEL_CAPACITY);
+        let traffic_bridge_tx = traffic_tx.clone();
+        config.debug_tx = Some(debug_tx);
         let (runtime_exit, completion_future) = start_runtime(&mode, &config).await?;
         let actor_system = ActorSystem::new();
         let context = actor_system.actor_context(&format!("session:{id}"));
@@ -55,6 +68,7 @@ impl SessionActor {
         let actor = Self {
             context,
             id,
+            name,
             profile_id,
             mode,
             state: SessionState::Running,
@@ -63,9 +77,19 @@ impl SessionActor {
             error: None,
             runtime_exit,
             completion: completion_rx,
+            traffic_tx: Some(traffic_tx),
         };
         let snapshot = actor.snapshot();
         let handle = actor.run_with_channel(tx.clone(), rx);
+
+        tokio::spawn(async move {
+            while let Some(recorded) = debug_rx.recv().await {
+                if let Some(ref external) = external_debug_tx {
+                    let _ = external.send(recorded.clone());
+                }
+                let _ = traffic_bridge_tx.send(recorded);
+            }
+        });
 
         tokio::spawn(async move {
             let result = completion_future.future.await;
@@ -86,6 +110,7 @@ impl SessionActor {
     fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             id: self.id,
+            name: self.name.clone(),
             profile_id: self.profile_id.clone(),
             mode: self.mode.clone(),
             state: self.state,
@@ -99,6 +124,7 @@ impl SessionActor {
         if self.state.is_terminal() {
             return;
         }
+        self.traffic_tx.take();
         match result {
             Ok(outcome) => {
                 self.state = SessionState::Stopped;
@@ -164,6 +190,22 @@ impl ActorHandler<StopSession> for SessionActor {
         let result = self.wait_for_completion().await?;
         self.apply_completion(result);
         Ok(self.snapshot())
+    }
+}
+
+impl ActorHandler<SubscribeSessionTraffic> for SessionActor {
+    type Reply = Result<broadcast::Receiver<RecordedEvent>, SessionError>;
+
+    async fn handle(&mut self, _message: SubscribeSessionTraffic) -> Self::Reply {
+        self.traffic_tx
+            .as_ref()
+            .map(broadcast::Sender::subscribe)
+            .ok_or_else(|| {
+                SessionError::new(
+                    super::SessionErrorCode::NotTerminal,
+                    "session traffic stream is no longer available",
+                )
+            })
     }
 }
 

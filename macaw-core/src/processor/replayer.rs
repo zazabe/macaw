@@ -67,11 +67,16 @@ impl ActorHandler<ReplayerCommand> for Replayer {
 impl Replayer {
     async fn play(&mut self) -> Result<(), anyhow::Error> {
         for event in self.events.iter() {
-            let Event { proxy_id, data, .. } = event;
+            let RecordedEvent {
+                proxy_id,
+                timestamp,
+                event,
+            } = event;
             if let Some(ref tx) = self.debug_tx {
                 let _ = tx.send(RecordedEvent {
                     proxy_id,
-                    event: data.clone(),
+                    timestamp,
+                    event: event.clone(),
                 });
             }
             let (replay_lock_holder, replay_lock) = lock_channel();
@@ -82,7 +87,7 @@ impl Replayer {
             ))?;
             proxy.send(RecordedEventWithLock {
                 proxy_id,
-                event: data,
+                event,
                 replay_lock: replay_lock_holder,
             })?;
             replay_lock.wait().await;

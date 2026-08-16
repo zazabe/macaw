@@ -1,7 +1,8 @@
-use macaw::core::ProxyConfig;
+use macaw::core::{ProxyConfig, RecordedEvent};
 use macaw::session::{
-    CreateSession, ProfileId, ProfileSnapshot, SessionConfig, SessionEndpoint, SessionError,
-    SessionErrorCode, SessionMode, SessionOutcome, SessionSnapshot, SessionState,
+    CreateSession, ProfileId, ProfileProxySnapshot, ProfileSnapshot, SessionConfig,
+    SessionEndpoint, SessionError, SessionErrorCode, SessionMode, SessionName, SessionOutcome,
+    SessionSnapshot, SessionState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +14,7 @@ pub const API_VERSION: &str = "v1";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
+    pub name: Option<String>,
     pub mode: ModeRequest,
 }
 
@@ -65,12 +67,18 @@ impl CreateProfileRequest {
 }
 
 impl CreateSessionRequest {
-    pub fn into_actor_request(self, profile_id: ProfileId) -> CreateSession {
+    pub fn into_actor_request(self, profile_id: ProfileId) -> Result<CreateSession, ModelError> {
         let mode = match self.mode {
             ModeRequest::Record { output } => SessionMode::Record { output },
             ModeRequest::Replay { recording } => SessionMode::Replay { recording },
         };
-        CreateSession::new(profile_id, mode)
+        let name = self
+            .name
+            .map(|name| name.parse::<SessionName>().map_err(ModelError::Invalid))
+            .transpose()?;
+        let mut request = CreateSession::new(profile_id, mode);
+        request.name = name;
+        Ok(request)
     }
 }
 
@@ -169,17 +177,25 @@ pub struct HealthResponse {
 #[derive(Debug, Serialize)]
 pub struct ProfileResponse {
     pub id: ProfileId,
+    pub config_root: PathBuf,
+    pub proxies: BTreeMap<String, ProfileProxySnapshot>,
 }
 
 impl From<ProfileSnapshot> for ProfileResponse {
     fn from(profile: ProfileSnapshot) -> Self {
-        Self { id: profile.id }
+        Self {
+            id: profile.id,
+            config_root: profile.config_root,
+            proxies: profile.proxies,
+        }
     }
 }
 
 #[derive(Debug, Serialize)]
 pub struct SessionResponse {
     pub id: macaw::session::SessionId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<SessionName>,
     pub profile_id: ProfileId,
     pub mode: ModeResponse,
     pub state: SessionState,
@@ -231,6 +247,7 @@ impl From<SessionSnapshot> for SessionResponse {
         });
         Self {
             id: snapshot.id,
+            name: snapshot.name,
             profile_id: snapshot.profile_id,
             mode,
             state: snapshot.state,
@@ -250,6 +267,24 @@ pub struct ErrorResponse {
 pub struct ErrorDetail {
     pub code: SessionErrorCode,
     pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TrafficStreamEvent {
+    Traffic {
+        #[serde(flatten)]
+        event: RecordedEvent,
+    },
+    DroppedEvents {
+        count: u64,
+    },
+}
+
+impl From<RecordedEvent> for TrafficStreamEvent {
+    fn from(event: RecordedEvent) -> Self {
+        Self::Traffic { event }
+    }
 }
 
 impl ErrorDetail {

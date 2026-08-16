@@ -90,6 +90,10 @@ impl RecordEvent for HttpRequestEvent {
             ],
         )
     }
+
+    fn debug_headers(&self) -> BTreeMap<String, String> {
+        self.headers.clone()
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -205,5 +209,9 @@ impl RecordEvent for HttpResponseEvent {
                 RecordPart::Content(body_preview(&self.body)),
             ],
         )
+    }
+
+    fn debug_headers(&self) -> BTreeMap<String, String> {
+        self.headers.clone()
     }
 }

@@ -94,6 +94,44 @@ overrides = "./overrides/ws.json"
 
 Recording stops and saves when you press Ctrl+C or kill the process.
 
+### Control server and client
+
+Run a long-lived control server over TCP or a Unix socket:
+
+```bash
+macaw serve --tcp 127.0.0.1:8080
+macaw serve --unix /tmp/macaw.sock
+```
+
+Use `macaw client` (or its `macaw ctl` alias) to manage profiles and sessions:
+
+```bash
+macaw client profile create development --file config/macaw.toml
+macaw client session record development --name test-run --output recordings/test.json
+macaw client session list --profile development
+macaw client watch <session-id>
+macaw client session stop <session-id>
+```
+
+Pass `--url http://host:port` or `--unix /path/to/socket` before the client
+subcommand. `MACAW_CONTROL_URL` and `MACAW_CONTROL_UNIX` provide equivalent
+defaults. Use `-o json` for scripts, or stream newline-delimited events with
+`watch --format jsonl`.
+
+The foreground workflow creates a session, displays its proxy endpoints,
+watches traffic, and stops and flushes the session on Ctrl+C:
+
+```bash
+macaw client run record development --output recordings/test.json
+macaw client run replay development --recording recordings/test.json
+```
+
+Watch streams the same typed entries used by recording files. Pretty output is
+rendered client-side through each event type's debug formatter, while
+`watch --format jsonl` emits raw recording entries. `watch --headers` displays
+headers exposed by the event. Traffic uses a bounded live stream; a slow client
+receives a `dropped_events` notification instead of blocking proxy traffic.
+
 ## Building
 
 ```bash

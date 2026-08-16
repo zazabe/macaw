@@ -69,11 +69,8 @@ impl ActorHandler<RecordedEvent> for Recorder {
 
     async fn handle(&mut self, message: RecordedEvent) {
         if let Some(ref tx) = self.debug_tx {
-            let _ = tx.send(RecordedEvent {
-                proxy_id: message.proxy_id,
-                event: message.event.clone(),
-            });
+            let _ = tx.send(message.clone());
         }
-        self.events.push(message.proxy_id, message.event);
+        self.events.push(message);
     }
 }

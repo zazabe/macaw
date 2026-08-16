@@ -1,5 +1,6 @@
 //! Macaw CLI - record and replay network traffic.
 
+mod client;
 mod config;
 mod debug;
 mod record;
@@ -38,6 +39,9 @@ enum Commands {
     },
     /// Run the versioned HTTP control server
     Serve(serve::ServeArgs),
+    /// Control a running Macaw server
+    #[command(alias = "ctl")]
+    Client(client::ClientArgs),
 }
 
 #[tokio::main]
@@ -61,6 +65,9 @@ async fn main() -> Result<()> {
         }
         Commands::Serve(args) => {
             serve::run(args).await?;
+        }
+        Commands::Client(args) => {
+            client::run(args).await?;
         }
     }
 

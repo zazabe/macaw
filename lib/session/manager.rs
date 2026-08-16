@@ -1,6 +1,7 @@
 use super::{
     GetSessionStatus, ProfileId, ProfileSnapshot, SessionActor, SessionConfig, SessionError,
-    SessionErrorCode, SessionId, SessionMode, SessionSnapshot, StopSession,
+    SessionErrorCode, SessionId, SessionMode, SessionName, SessionSnapshot, StopSession,
+    SubscribeSessionTraffic,
 };
 use macaw_core::prelude::*;
 use std::collections::HashMap;
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct CreateSession {
     pub id: Option<SessionId>,
+    pub name: Option<SessionName>,
     pub profile_id: ProfileId,
     pub mode: SessionMode,
 }
@@ -17,6 +19,7 @@ impl CreateSession {
     pub fn new(profile_id: ProfileId, mode: SessionMode) -> Self {
         Self {
             id: None,
+            name: None,
             profile_id,
             mode,
         }
@@ -74,6 +77,11 @@ pub struct BeginShutdown;
 #[derive(Debug)]
 pub struct GetManagerReadiness;
 
+#[derive(Debug, Clone, Copy)]
+pub struct SubscribeTraffic {
+    pub id: SessionId,
+}
+
 #[derive(Debug)]
 pub struct SessionManager {
     context: ActorContext,
@@ -116,6 +124,28 @@ impl SessionManager {
             .request(StopSession)
             .await
             .map_err(SessionError::actor)?
+    }
+
+    fn profile_snapshot(id: ProfileId, config: &SessionConfig) -> ProfileSnapshot {
+        ProfileSnapshot {
+            id,
+            config_root: config.root.clone(),
+            proxies: config
+                .proxies
+                .iter()
+                .map(|(name, proxy)| {
+                    (
+                        name.clone(),
+                        super::ProfileProxySnapshot {
+                            protocol: proxy.protocol().to_owned(),
+                            bind: proxy.bind().to_owned(),
+                            target: proxy.target().map(str::to_owned),
+                            overrides: proxy.overrides().map(str::to_owned),
+                        },
+                    )
+                })
+                .collect(),
+        }
     }
 }
 
@@ -225,6 +255,13 @@ impl SessionManagerHandle {
         self.request(GetManagerReadiness).await
     }
 
+    pub async fn subscribe_traffic(
+        &self,
+        id: SessionId,
+    ) -> Result<tokio::sync::broadcast::Receiver<RecordedEvent>, SessionError> {
+        self.request(SubscribeTraffic { id }).await?
+    }
+
     /// Gracefully stop all sessions and await manager completion.
     pub async fn shutdown(&self) -> Result<(), SessionError> {
         self.actor.stop();
@@ -269,9 +306,7 @@ impl ActorHandler<CreateProfile> for SessionManager {
             ));
         }
         SessionActor::validate_profile(&request.config)?;
-        let snapshot = ProfileSnapshot {
-            id: request.id.clone(),
-        };
+        let snapshot = Self::profile_snapshot(request.id.clone(), &request.config);
         self.profiles.insert(request.id, request.config);
         Ok(snapshot)
     }
@@ -282,8 +317,8 @@ impl ActorHandler<GetProfile> for SessionManager {
 
     async fn handle(&mut self, request: GetProfile) -> Self::Reply {
         self.profiles
-            .contains_key(&request.id)
-            .then_some(ProfileSnapshot { id: request.id })
+            .get(&request.id)
+            .map(|config| Self::profile_snapshot(request.id, config))
             .ok_or_else(|| SessionError::new(SessionErrorCode::NotFound, "profile not found"))
     }
 }
@@ -294,9 +329,8 @@ impl ActorHandler<ListProfiles> for SessionManager {
     async fn handle(&mut self, _request: ListProfiles) -> Self::Reply {
         let mut profiles = self
             .profiles
-            .keys()
-            .cloned()
-            .map(|id| ProfileSnapshot { id })
+            .iter()
+            .map(|(id, config)| Self::profile_snapshot(id.clone(), config))
             .collect::<Vec<_>>();
         profiles.sort_by_key(|profile| profile.id.to_string());
         profiles
@@ -347,7 +381,7 @@ impl ActorHandler<CreateSession> for SessionManager {
                 )
             })?;
         let (handle, snapshot) =
-            SessionActor::start(id, request.profile_id, request.mode, config).await?;
+            SessionActor::start(id, request.name, request.profile_id, request.mode, config).await?;
         if self.sessions.insert(id, handle).is_some() {
             return Err(SessionError::new(
                 SessionErrorCode::Duplicate,
@@ -475,5 +509,22 @@ impl ActorHandler<GetManagerReadiness> for SessionManager {
 
     async fn handle(&mut self, _request: GetManagerReadiness) -> Self::Reply {
         self.accepting_sessions
+    }
+}
+
+impl ActorHandler<SubscribeTraffic> for SessionManager {
+    type Reply = Result<tokio::sync::broadcast::Receiver<RecordedEvent>, SessionError>;
+
+    async fn handle(&mut self, request: SubscribeTraffic) -> Self::Reply {
+        let handle = self.sessions.get(&request.id).ok_or_else(|| {
+            SessionError::new(
+                SessionErrorCode::NotFound,
+                format!("session {} not found", request.id),
+            )
+        })?;
+        handle
+            .request(SubscribeSessionTraffic)
+            .await
+            .map_err(SessionError::actor)?
     }
 }

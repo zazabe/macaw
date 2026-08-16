@@ -1,15 +1,17 @@
 use super::model::{
     API_VERSION, CreateProfileRequest, CreateSessionRequest, ErrorDetail, ErrorResponse,
-    HealthResponse, ModelError, ProfileResponse, SessionResponse,
+    HealthResponse, ModelError, ProfileResponse, SessionResponse, TrafficStreamEvent,
 };
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use macaw::session::{ProfileId, SessionError, SessionErrorCode, SessionId, SessionManagerHandle};
 use std::time::Duration;
+use std::{convert::Infallible, time};
 
 const JSON_BODY_LIMIT: usize = 1024 * 1024;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -27,6 +29,7 @@ pub fn router(manager: SessionManagerHandle) -> Router {
         .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/{id}", get(get_session).delete(remove_session))
         .route("/v1/sessions/{id}/stop", post(stop_session))
+        .route("/v1/sessions/{id}/events", get(watch_session))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
         .with_state(manager)
@@ -50,7 +53,9 @@ async fn create_session(
 ) -> Result<Response, ApiError> {
     let profile_id = parse_profile_id(&profile_id)?;
     let Json(request) = request.map_err(ApiError::json)?;
-    let request = request.into_actor_request(profile_id);
+    let request = request
+        .into_actor_request(profile_id)
+        .map_err(ApiError::model)?;
     let snapshot = with_timeout(LIFECYCLE_TIMEOUT, manager.create(request)).await?;
     let location = format!("/v1/sessions/{}", snapshot.id);
     let mut response = (StatusCode::CREATED, Json(SessionResponse::from(snapshot))).into_response();
@@ -145,6 +150,33 @@ async fn stop_session(
     let id = parse_id(&id)?;
     let snapshot = with_timeout(LIFECYCLE_TIMEOUT, manager.stop_session(id)).await?;
     Ok(Json(SessionResponse::from(snapshot)))
+}
+
+async fn watch_session(
+    State(manager): State<SessionManagerHandle>,
+    Path(id): Path<String>,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let id = parse_id(&id)?;
+    let mut receiver = with_timeout(QUERY_TIMEOUT, manager.subscribe_traffic(id)).await?;
+    let stream = async_stream::stream! {
+        loop {
+            let payload = match receiver.recv().await {
+                Ok(event) => TrafficStreamEvent::from(event),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                    TrafficStreamEvent::DroppedEvents { count }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            let data = serde_json::to_string(&payload)
+                .expect("traffic stream event must serialize");
+            yield Ok(Event::default().event("traffic").data(data));
+        }
+    };
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(time::Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }
 
 async fn remove_session(
@@ -421,8 +453,17 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
         assert_eq!(response.headers()[header::LOCATION], "/v1/profiles/example");
         let profile_body = response_json(response).await;
-        assert_eq!(profile_body, json!({"id": "example"}));
-        assert!(!profile_body.to_string().contains("target"));
+        assert_eq!(profile_body["id"], "example");
+        assert_eq!(
+            profile_body["config_root"],
+            directory.path().to_str().unwrap()
+        );
+        assert_eq!(profile_body["proxies"]["api"]["protocol"], "http");
+        assert_eq!(profile_body["proxies"]["api"]["bind"], "127.0.0.1:0");
+        assert_eq!(
+            profile_body["proxies"]["api"]["target"],
+            "https://example.com"
+        );
 
         let response = app
             .clone()
@@ -441,14 +482,19 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response_json(response).await, json!([{"id": "example"}]));
+        let profiles = response_json(response).await;
+        assert_eq!(profiles.as_array().unwrap().len(), 1);
+        assert_eq!(profiles[0]["id"], "example");
 
         let response = app
             .clone()
             .oneshot(json_request(
                 "POST",
                 "/v1/profiles/example/sessions",
-                json!({"mode": {"type": "record", "output": "api.json"}}),
+                json!({
+                    "name": "integration-test",
+                    "mode": {"type": "record", "output": "api.json"}
+                }),
             ))
             .await
             .unwrap();
@@ -458,6 +504,7 @@ mod tests {
             .unwrap()
             .to_owned();
         let created = response_json(response).await;
+        assert_eq!(created["name"], "integration-test");
         assert_eq!(created["profile_id"], "example");
         assert_eq!(created["state"], "running");
         assert_eq!(created["proxies"]["api"]["protocol"], "http");
@@ -546,6 +593,97 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         manager.shutdown().await.unwrap();
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn session_events_stream_as_sse() {
+        let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_address = target_listener.local_addr().unwrap();
+        let target = tokio::spawn(async move {
+            axum::serve(
+                target_listener,
+                Router::new().route("/{*path}", get(|| async { "ok" })),
+            )
+            .await
+        });
+
+        let directory = tempfile::tempdir().unwrap();
+        let manager = SessionManager::start();
+        let app = router(manager.clone());
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/profiles",
+                json!({
+                    "id": "events",
+                    "config_root": directory.path(),
+                    "proxies": {
+                        "api": {
+                            "type": "http",
+                            "config": {
+                                "bind": "127.0.0.1:0",
+                                "target": format!("http://{target_address}")
+                            }
+                        }
+                    }
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/profiles/events/sessions",
+                json!({"mode": {"type": "record", "output": "events.json"}}),
+            ))
+            .await
+            .unwrap();
+        let created = response_json(response).await;
+        let id = created["id"].as_str().unwrap();
+        let proxy_url = created["proxies"]["api"]["url"].as_str().unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/sessions/{id}/events"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/event-stream")
+        );
+        let mut body = response.into_body();
+
+        let proxied = reqwest::get(format!("{proxy_url}/hello")).await.unwrap();
+        assert_eq!(proxied.status(), StatusCode::OK);
+        let frame = tokio::time::timeout(Duration::from_secs(2), body.frame())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let data = frame.into_data().unwrap();
+        let data = String::from_utf8(data.to_vec()).unwrap();
+        assert!(data.contains("\"type\":\"traffic\""));
+        assert!(data.contains("\"proxy\":\"api\""));
+        assert!(data.contains("\"timestamp\":"));
+        assert!(data.contains("\"HttpRequest\":"));
+        assert!(data.contains("\"GET\""));
+        assert!(data.contains("\"headers\":{"));
+
+        manager.stop_session(id.parse().unwrap()).await.unwrap();
+        manager.shutdown().await.unwrap();
+        target.abort();
     }
 
     #[tokio::test]

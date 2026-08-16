@@ -2,10 +2,13 @@ use crate::lib::*;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use std::any::Any;
 
-/// Message wrapping a `RecordEvent` associated with a specific proxy.
-#[derive(Debug)]
+/// A timestamped recording entry associated with a specific proxy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordedEvent {
+    #[serde(rename = "proxy")]
     pub proxy_id: ProxyId,
+    pub timestamp: DateTime<Utc>,
+    #[serde(flatten)]
     pub event: Box<dyn RecordEvent>,
 }
 
@@ -13,6 +16,7 @@ impl RecordedEvent {
     pub fn new<E: RecordEvent>(proxy_id: ProxyId, event: E) -> Self {
         Self {
             proxy_id,
+            timestamp: Utc::now(),
             event: Box::new(event),
         }
     }
@@ -136,6 +140,11 @@ pub trait RecordEvent: Send + Sync + Any + fmt::Debug + Clone + 'static {
             vec![RecordPart::Content(format!("{:?}", self))],
         )
     }
+
+    /// Return headers that are safe to expose in human-facing diagnostics.
+    fn debug_headers(&self) -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
 }
 
 impl dyn RecordEvent {
@@ -171,25 +180,6 @@ impl RecordHeader {
             record_id: Uuid::new_v4().to_string(),
             record_seed: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Event<D> {
-    #[serde(rename = "proxy")]
-    pub(crate) proxy_id: ProxyId,
-    pub(crate) timestamp: DateTime<Utc>,
-    #[serde(flatten)]
-    pub(crate) data: D,
-}
-
-impl<D> Event<D> {
-    pub(crate) fn new(proxy_id: ProxyId, data: D) -> Self {
-        Self {
-            proxy_id,
-            timestamp: Utc::now(),
-            data,
         }
     }
 }
