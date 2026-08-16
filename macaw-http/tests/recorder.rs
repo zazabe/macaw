@@ -3,9 +3,33 @@ use http::Request;
 use insta::assert_json_snapshot;
 use macaw_core::prelude::*;
 use macaw_http::prelude::*;
+use std::sync::{Arc, Mutex};
 
 mod helpers;
 use helpers::*;
+
+#[derive(Clone, Default)]
+struct CaptureUpstreamRequest(Arc<Mutex<Option<(String, String)>>>);
+
+impl HttpTransform for CaptureUpstreamRequest {
+    fn encode_request(&self, request: HttpRequestEvent) -> Result<HttpRequestEvent, anyhow::Error> {
+        let host = request.headers.get("host").cloned().unwrap_or_default();
+        *self.0.lock().unwrap() = Some((request.uri.to_string(), host));
+        Ok(request)
+    }
+}
+
+#[derive(Clone)]
+struct FailingEncodeRequest;
+
+impl HttpTransform for FailingEncodeRequest {
+    fn encode_request(
+        &self,
+        _request: HttpRequestEvent,
+    ) -> Result<HttpRequestEvent, anyhow::Error> {
+        anyhow::bail!("signing failed")
+    }
+}
 
 #[tokio::test]
 async fn test_recorder_multiple_http_proxies() {
@@ -145,6 +169,90 @@ async fn test_recorder_multiple_http_proxies() {
       ]
     }
     "#);
+}
+
+#[tokio::test]
+async fn test_encode_request_sees_final_upstream_uri_and_host() {
+    let temp_file = tempfile::NamedTempFile::new().unwrap();
+    let server = httpmock::MockServer::start_async().await;
+    let mock = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/signed");
+        then.status(200);
+    });
+    let transform = CaptureUpstreamRequest::default();
+    let captured = transform.0.clone();
+
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let proxy_addr = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &server.base_url(),
+            HttpProxyOptions {
+                transform: Box::new(transform),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    reqwest::get(format!("http://{proxy_addr}/signed"))
+        .await
+        .unwrap();
+    mock.assert();
+
+    let (uri, host) = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(uri, format!("{}/signed", server.base_url()));
+    assert_eq!(host, server.address().to_string());
+
+    macaw.exit_handle().exit();
+    macaw.record_when_exit(temp_file.path()).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_recorder_returns_processing_error_when_transform_fails() {
+    let temp_file = tempfile::NamedTempFile::new().unwrap();
+    let server = httpmock::MockServer::start_async().await;
+    let upstream = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/signed");
+        then.status(200);
+    });
+
+    let mut macaw = Macaw::<Recorder>::recorder();
+    let proxy_addr = macaw
+        .add_http_proxy(
+            "http_proxy",
+            "127.0.0.1:0",
+            &server.base_url(),
+            HttpProxyOptions {
+                transform: Box::new(FailingEncodeRequest),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let response = reqwest::get(format!("http://{proxy_addr}/signed"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 500);
+    let body = response.json::<serde_json::Value>().await.unwrap();
+    assert_json_snapshot!(body, {
+        r#".request_id"# => "[request_id]",
+    }, @r#"
+    {
+      "error": "Macaw processing error: Failed to encode request: signing failed",
+      "request_id": "[request_id]"
+    }
+    "#);
+    upstream.assert_calls(0);
+
+    macaw.exit_handle().exit();
+    macaw.record_when_exit(temp_file.path()).await.unwrap();
+
+    let recording: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(temp_file.path()).unwrap()).unwrap();
+    assert_eq!(recording["events"], serde_json::json!([]));
 }
 
 #[tokio::test]

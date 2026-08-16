@@ -12,14 +12,17 @@ use tokio::task::JoinHandle;
 pub struct TestHttpRedact;
 
 impl HttpRedact for TestHttpRedact {
-    fn http_redact_request(&self, mut request: HttpRequestEvent) -> HttpRequestEvent {
+    fn http_redact_request(
+        &self,
+        mut request: HttpRequestEvent,
+    ) -> Result<HttpRequestEvent, anyhow::Error> {
         request
             .headers
             .insert("x-signature".to_string(), "REDACTED".to_string());
         request
             .headers
             .insert("x-timestamp".to_string(), "TIMESTAMP".to_string());
-        request
+        Ok(request)
     }
 }
 

@@ -9,7 +9,7 @@ workflow:
 fmt:
   stage: main
   interruptible: true
-  image: docker.io/library/rust:1.90.0
+  image: docker.io/library/rust:1.97.1
   before_script:
     - rustup component add rustfmt
   script:
@@ -19,7 +19,7 @@ fmt:
 clippy:
   stage: main
   interruptible: true
-  image: docker.io/library/rust:1.90.0
+  image: docker.io/library/rust:1.97.1
   before_script:
     - rustup component add clippy
   script:
@@ -28,6 +28,17 @@ clippy:
 test:
   stage: main
   interruptible: true
-  image: docker.io/library/rust:1.90.0
+  image: docker.io/library/rust:1.97.1
   script:
     - cargo test --workspace --all-targets --all-features
+
+wasi-python:
+  stage: main
+  interruptible: true
+  image: docker.io/library/rust:1.97.1
+  before_script:
+    - apt-get update
+    - apt-get install --yes make python3 python3-venv
+  script:
+    - make -C examples/wasm/python build
+    - MACAW_WASM_COMPONENT="$CI_PROJECT_DIR/examples/wasm/python/target/http-auth-plugin-python.wasm" cargo test --release -p macaw-wasm --test recorder
