@@ -1,4 +1,5 @@
 {
+    "format_version": 2,
     "header": {
         "record_id": "4866b9b2-1887-4b6a-8364-99c6d1423693",
         "record_seed": "285f76b9-fa34-4eb2-adde-5ec5a63994ac",
@@ -6,22 +7,30 @@
     },
     "events": [
         {
+            "sequence": 0,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "0"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.924985781Z",
-            "WsDownstream": {
-                "peer_id": 0,
-                "event": {
-                    "Open": {
-                        "request": {
-                            "method": "GET",
-                            "uri": "/",
-                            "version": "HTTP/1.1",
-                            "headers": {
-                                "connection": "Upgrade",
-                                "host": "127.0.0.1:39573",
-                                "sec-websocket-key": "nth4WJ0KaPbnUpv2ibCYtA==",
-                                "sec-websocket-version": "13",
-                                "upgrade": "websocket"
+            "event": {
+                "Ws": {
+                    "peer_id": 0,
+                    "event": {
+                        "Open": {
+                            "request": {
+                                "method": "GET",
+                                "uri": "/",
+                                "version": "HTTP/1.1",
+                                "headers": {
+                                    "connection": "Upgrade",
+                                    "host": "127.0.0.1:39573",
+                                    "sec-websocket-key": "nth4WJ0KaPbnUpv2ibCYtA==",
+                                    "sec-websocket-version": "13",
+                                    "upgrade": "websocket"
+                                }
                             }
                         }
                     }
@@ -29,22 +38,30 @@
             }
         },
         {
+            "sequence": 1,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "1"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.926036384Z",
-            "WsDownstream": {
-                "peer_id": 1,
-                "event": {
-                    "Open": {
-                        "request": {
-                            "method": "GET",
-                            "uri": "/",
-                            "version": "HTTP/1.1",
-                            "headers": {
-                                "connection": "Upgrade",
-                                "host": "127.0.0.1:39573",
-                                "sec-websocket-key": "D/qEKq//NbxwjXOmI6BOjA==",
-                                "sec-websocket-version": "13",
-                                "upgrade": "websocket"
+            "event": {
+                "Ws": {
+                    "peer_id": 1,
+                    "event": {
+                        "Open": {
+                            "request": {
+                                "method": "GET",
+                                "uri": "/",
+                                "version": "HTTP/1.1",
+                                "headers": {
+                                    "connection": "Upgrade",
+                                    "host": "127.0.0.1:39573",
+                                    "sec-websocket-key": "D/qEKq//NbxwjXOmI6BOjA==",
+                                    "sec-websocket-version": "13",
+                                    "upgrade": "websocket"
+                                }
                             }
                         }
                     }
@@ -52,159 +69,255 @@
             }
         },
         {
+            "sequence": 2,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "0"
+            },
+            "role": "emit",
             "timestamp": "2025-11-19T14:29:23.938447672Z",
-            "WsUpstream": {
-                "peer_id": 0,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "msg1 for conn0"
+            "event": {
+                "Ws": {
+                    "peer_id": 0,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "msg1 for conn0"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 3,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "1"
+            },
+            "role": "emit",
             "timestamp": "2025-11-19T14:29:23.938476025Z",
-            "WsUpstream": {
-                "peer_id": 1,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "msg1 for conn1"
+            "event": {
+                "Ws": {
+                    "peer_id": 1,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "msg1 for conn1"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 4,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "0"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.939035446Z",
-            "WsDownstream": {
-                "peer_id": 0,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "hello from client1"
+            "event": {
+                "Ws": {
+                    "peer_id": 0,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "hello from client1"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 5,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "0"
+            },
+            "role": "emit",
             "timestamp": "2025-11-19T14:29:23.939051005Z",
-            "WsUpstream": {
-                "peer_id": 0,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "msg2 for conn0"
+            "event": {
+                "Ws": {
+                    "peer_id": 0,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "msg2 for conn0"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 6,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "1"
+            },
+            "role": "emit",
             "timestamp": "2025-11-19T14:29:23.939059631Z",
-            "WsUpstream": {
-                "peer_id": 1,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "msg2 for conn1"
+            "event": {
+                "Ws": {
+                    "peer_id": 1,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "msg2 for conn1"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 7,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "1"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.939266650Z",
-            "WsDownstream": {
-                "peer_id": 1,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "hello from client2"
+            "event": {
+                "Ws": {
+                    "peer_id": 1,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "hello from client2"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 8,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "0"
+            },
+            "role": "emit",
             "timestamp": "2025-11-19T14:29:23.939400652Z",
-            "WsUpstream": {
-                "peer_id": 0,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "echo: hello from client1"
+            "event": {
+                "Ws": {
+                    "peer_id": 0,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "echo: hello from client1"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 9,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "1"
+            },
+            "role": "emit",
             "timestamp": "2025-11-19T14:29:23.939486152Z",
-            "WsUpstream": {
-                "peer_id": 1,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Text": "echo: hello from client2"
+            "event": {
+                "Ws": {
+                    "peer_id": 1,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Text": "echo: hello from client2"
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 10,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "0"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.980052462Z",
-            "WsDownstream": {
-                "peer_id": 0,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Close": null
+            "event": {
+                "Ws": {
+                    "peer_id": 0,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Close": null
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 11,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "0"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.980077790Z",
-            "WsDownstream": {
-                "peer_id": 0,
-                "event": "Disconnect"
+            "event": {
+                "Ws": {
+                    "peer_id": 0,
+                    "event": "Disconnect"
+                }
             }
         },
         {
+            "sequence": 12,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "1"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.980099801Z",
-            "WsDownstream": {
-                "peer_id": 1,
-                "event": {
-                    "Message": {
-                        "message": {
-                            "Close": null
+            "event": {
+                "Ws": {
+                    "peer_id": 1,
+                    "event": {
+                        "Message": {
+                            "message": {
+                                "Close": null
+                            }
                         }
                     }
                 }
             }
         },
         {
+            "sequence": 13,
             "proxy": "ws_proxy1",
+            "stream": {
+                "protocol": "ws",
+                "id": "1"
+            },
+            "role": "gate",
             "timestamp": "2025-11-19T14:29:23.980119899Z",
-            "WsDownstream": {
-                "peer_id": 1,
-                "event": "Disconnect"
+            "event": {
+                "Ws": {
+                    "peer_id": 1,
+                    "event": "Disconnect"
+                }
             }
         }
     ]

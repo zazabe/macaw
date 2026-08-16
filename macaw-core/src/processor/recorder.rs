@@ -71,6 +71,8 @@ impl ActorHandler<RecordedEvent> for Recorder {
         if let Some(ref tx) = self.debug_tx {
             let _ = tx.send(message.clone());
         }
-        self.events.push(message);
+        if let Err(error) = self.events.push(message) {
+            self.context.exit_with_error(error);
+        }
     }
 }

@@ -4,6 +4,75 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::error;
 
+#[test]
+fn test_replayer_rejects_unsupported_recording_version() {
+    let recording_path = test_path!().join("./data/replayer-test_replayer_multiple_proxies.json");
+    let mut recording: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(recording_path).unwrap()).unwrap();
+    recording["format_version"] = serde_json::json!(RECORD_FORMAT_VERSION + 1);
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), serde_json::to_vec(&recording).unwrap()).unwrap();
+
+    let error = Macaw::<Replayer>::replayer(file.path()).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("Unsupported recording format version")
+    );
+}
+
+#[test]
+fn test_replayer_rejects_non_contiguous_sequence() {
+    let recording_path = test_path!().join("./data/replayer-test_replayer_multiple_proxies.json");
+    let mut recording: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(recording_path).unwrap()).unwrap();
+    recording["events"][1]["sequence"] = serde_json::json!(9);
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), serde_json::to_vec(&recording).unwrap()).unwrap();
+
+    let error = Macaw::<Replayer>::replayer(file.path()).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("Invalid event sequence 9, expected 1")
+    );
+}
+
+#[test]
+fn test_replayer_rejects_empty_protocol_identity() {
+    let recording_path = test_path!().join("./data/replayer-test_replayer_multiple_proxies.json");
+    let mut recording: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(recording_path).unwrap()).unwrap();
+    recording["events"][0]["stream"]["protocol"] = serde_json::json!("");
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), serde_json::to_vec(&recording).unwrap()).unwrap();
+
+    let error = Macaw::<Replayer>::replayer(file.path()).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("empty protocol or logical stream ID")
+    );
+}
+
+#[test]
+fn test_replayer_rejects_invalid_protocol_payload() {
+    let recording_path = test_path!().join("./data/replayer-test_replayer_multiple_proxies.json");
+    let mut recording: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(recording_path).unwrap()).unwrap();
+    recording["events"][0]["event"] =
+        serde_json::json!({ "UnknownProtocolEvent": { "value": "invalid" } });
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), serde_json::to_vec(&recording).unwrap()).unwrap();
+
+    let error = Macaw::<Replayer>::replayer(file.path()).unwrap_err();
+
+    assert!(error.to_string().contains("invalid protocol payload"));
+}
+
 #[tokio::test]
 async fn test_replayer_multiple_proxies() {
     let recording_path = test_path!().join("./data/replayer-test_replayer_multiple_proxies.json");

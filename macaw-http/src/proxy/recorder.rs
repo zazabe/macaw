@@ -81,14 +81,25 @@ impl HttpProxyRecorderActor {
         Ok(request)
     }
 
-    fn record<E: RecordEvent>(&self, event: E) -> Result<(), anyhow::Error> {
-        self.recorder.send(RecordedEvent::new(self.proxy_id, event))
+    fn record<E: RecordEvent>(
+        &self,
+        stream_id: Uuid,
+        role: ReplayRole,
+        event: E,
+    ) -> Result<(), anyhow::Error> {
+        self.recorder.send(RecordedEvent::new(
+            self.proxy_id,
+            LogicalStreamId::new("http", stream_id.to_string()),
+            role,
+            event,
+        ))
     }
 
     async fn process_request(
         &self,
         request: HttpRequestEvent,
     ) -> Result<HttpResponseEvent, anyhow::Error> {
+        let request_id = request.request_id;
         let request_decoded = self
             .options
             .transform
@@ -114,7 +125,7 @@ impl HttpProxyRecorderActor {
             .http_redact_request(request_overridden.clone())
             .context("Failed to redact request")?;
 
-        self.record(request_redacted)
+        self.record(request_id, ReplayRole::Gate, request_redacted)
             .context("Failed to record request")?;
 
         let response = response_future.await;
@@ -129,7 +140,7 @@ impl HttpProxyRecorderActor {
             .overrides
             .http_override_response(response_decoded, request_overridden);
 
-        self.record(response_overridden.clone())
+        self.record(request_id, ReplayRole::Emit, response_overridden.clone())
             .context("Failed to record response")?;
 
         let encoded_response = self

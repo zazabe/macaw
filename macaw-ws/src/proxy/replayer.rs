@@ -65,30 +65,24 @@ impl WsProxyReplayerActor {
         record: RecordedEventWithLock,
     ) -> Result<(), anyhow::Error> {
         let RecordedEventWithLock {
-            event, replay_lock, ..
+            event,
+            role,
+            replay_lock,
+            ..
         } = record;
+        let event = event.downcast::<WsRecordedEvent>().map_err(|event| {
+            anyhow::anyhow!("Failed to downcast to WsRecordedEvent: {:?}", event)
+        })?;
 
-        match event.downcast::<WsUpstreamEvent>() {
-            Ok(event) => {
-                self.handle_recorded_upstream_message(*event, replay_lock)
-                    .await
-            }
-            Err(event) => match event.downcast::<WsDownstreamEvent>() {
-                Ok(event) => {
-                    self.handle_recorded_downstream_message(*event, replay_lock)
-                        .await
-                }
-                Err(event) => Err(anyhow::anyhow!(
-                    "Failed to downcast to WsEvent: {:?}",
-                    event
-                )),
-            },
+        match role {
+            ReplayRole::Gate => self.handle_recorded_gate(*event, replay_lock).await,
+            ReplayRole::Emit => self.handle_recorded_emission(*event, replay_lock).await,
         }
     }
 
-    async fn handle_recorded_upstream_message(
+    async fn handle_recorded_emission(
         &mut self,
-        record: WsUpstreamEvent,
+        record: WsRecordedEvent,
         replay_lock: ReplayLockHolder,
     ) -> Result<(), anyhow::Error> {
         // upstream messages should already have a connection established
@@ -110,9 +104,9 @@ impl WsProxyReplayerActor {
         Ok(())
     }
 
-    async fn handle_recorded_downstream_message(
+    async fn handle_recorded_gate(
         &mut self,
-        record: WsDownstreamEvent,
+        record: WsRecordedEvent,
         replay_lock: ReplayLockHolder,
     ) -> Result<(), anyhow::Error> {
         // block replay until the downstream message is received

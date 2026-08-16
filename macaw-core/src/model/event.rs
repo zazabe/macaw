@@ -2,37 +2,121 @@ use crate::lib::*;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use std::any::Any;
 
-/// A timestamped recording entry associated with a specific proxy.
+/// Position of an event in the authoritative cross-protocol recording order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EventSequence(u64);
+
+impl EventSequence {
+    pub(crate) fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Causal role an event has during replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplayRole {
+    Gate,
+    Emit,
+}
+
+/// Protocol-owned identity for a logical stream within a proxy.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct LogicalStreamId {
+    protocol: String,
+    id: String,
+}
+
+impl LogicalStreamId {
+    pub fn new(protocol: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            protocol: protocol.into(),
+            id: id.into(),
+        }
+    }
+
+    pub fn protocol(&self) -> &str {
+        &self.protocol
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl fmt::Display for LogicalStreamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.protocol, self.id)
+    }
+}
+
+/// Runtime event associated with a proxy and logical protocol stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordedEvent {
     #[serde(rename = "proxy")]
     pub proxy_id: ProxyId,
     pub timestamp: DateTime<Utc>,
+    #[serde(rename = "stream")]
+    pub stream_id: LogicalStreamId,
+    pub role: ReplayRole,
     #[serde(flatten)]
     pub event: Box<dyn RecordEvent>,
 }
 
 impl RecordedEvent {
-    pub fn new<E: RecordEvent>(proxy_id: ProxyId, event: E) -> Self {
+    pub fn new<E: RecordEvent>(
+        proxy_id: ProxyId,
+        stream_id: LogicalStreamId,
+        role: ReplayRole,
+        event: E,
+    ) -> Self {
         Self {
             proxy_id,
             timestamp: Utc::now(),
+            stream_id,
+            role,
             event: Box::new(event),
         }
+    }
+
+    pub fn gate<E: RecordEvent>(proxy_id: ProxyId, stream_id: LogicalStreamId, event: E) -> Self {
+        Self::new(proxy_id, stream_id, ReplayRole::Gate, event)
+    }
+
+    pub fn emit<E: RecordEvent>(proxy_id: ProxyId, stream_id: LogicalStreamId, event: E) -> Self {
+        Self::new(proxy_id, stream_id, ReplayRole::Emit, event)
     }
 }
 
 #[derive(Debug)]
 pub struct RecordedEventWithLock {
+    pub sequence: EventSequence,
     pub proxy_id: ProxyId,
+    pub stream_id: LogicalStreamId,
+    pub role: ReplayRole,
     pub event: Box<dyn RecordEvent>,
     pub replay_lock: ReplayLockHolder,
 }
 
 impl RecordedEventWithLock {
-    pub fn new<E: RecordEvent>(proxy_id: ProxyId, event: E, replay_lock: ReplayLockHolder) -> Self {
+    pub fn new<E: RecordEvent>(
+        sequence: EventSequence,
+        proxy_id: ProxyId,
+        stream_id: LogicalStreamId,
+        role: ReplayRole,
+        event: E,
+        replay_lock: ReplayLockHolder,
+    ) -> Self {
         Self {
+            sequence,
             proxy_id,
+            stream_id,
+            role,
             event: Box::new(event),
             replay_lock,
         }
@@ -181,6 +265,35 @@ impl RecordHeader {
             record_seed: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
         }
+    }
+}
+
+/// Stable storage DTO for one event in the causal timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct StoredEvent {
+    pub(crate) sequence: EventSequence,
+    #[serde(rename = "proxy")]
+    pub(crate) proxy_id: ProxyId,
+    #[serde(rename = "stream")]
+    pub(crate) stream_id: LogicalStreamId,
+    pub(crate) role: ReplayRole,
+    pub(crate) timestamp: DateTime<Utc>,
+    pub(crate) event: serde_json::Value,
+}
+
+impl StoredEvent {
+    pub(crate) fn new(
+        sequence: EventSequence,
+        event: RecordedEvent,
+    ) -> Result<Self, serde_json::Error> {
+        Ok(Self {
+            sequence,
+            proxy_id: event.proxy_id,
+            stream_id: event.stream_id,
+            role: event.role,
+            timestamp: event.timestamp,
+            event: serde_json::to_value(event.event)?,
+        })
     }
 }
 

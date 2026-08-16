@@ -55,17 +55,21 @@ impl WsProxyRecorderActor {
         self.downstream.start(self.context()).await
     }
 
-    fn record_downstream(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
+    fn record_gate(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
         self.recorder.send(RecordedEvent::new(
             self.proxy_id,
-            WsDownstreamEvent::new(peer_id, event),
+            LogicalStreamId::new("ws", peer_id.to_string()),
+            ReplayRole::Gate,
+            WsRecordedEvent::new(peer_id, event),
         ))
     }
 
-    fn record_upstream(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
+    fn record_emission(&self, peer_id: WsPeerId, event: WsEvent) -> Result<(), anyhow::Error> {
         self.recorder.send(RecordedEvent::new(
             self.proxy_id,
-            WsUpstreamEvent::new(peer_id, event),
+            LogicalStreamId::new("ws", peer_id.to_string()),
+            ReplayRole::Emit,
+            WsRecordedEvent::new(peer_id, event),
         ))
     }
 
@@ -88,7 +92,7 @@ impl WsProxyRecorderActor {
                 .options
                 .redact
                 .ws_redact_event(event_overridden.clone());
-            self.record_downstream(peer_id, event_redacted)?;
+            self.record_gate(peer_id, event_redacted)?;
             let event_encoded = self.options.transform.encode_event(event_overridden)?;
             match event_encoded {
                 WsEvent::Message(message_event) => {
@@ -137,7 +141,7 @@ impl WsProxyRecorderActor {
                     .ws_upstream_override_event(event_decoded);
 
                 if let Some(event_overridden) = event_overridden {
-                    self.record_upstream(peer_id, event_overridden.clone())?;
+                    self.record_emission(peer_id, event_overridden.clone())?;
                     let encoded_event = self.options.transform.encode_event(event_overridden)?;
                     if let WsEvent::Message(message_event) = encoded_event {
                         self.downstream.send(peer_id, message_event.message)?;

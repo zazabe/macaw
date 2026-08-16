@@ -67,15 +67,21 @@ impl ActorHandler<ReplayerCommand> for Replayer {
 impl Replayer {
     async fn play(&mut self) -> Result<(), anyhow::Error> {
         for event in self.events.iter() {
-            let RecordedEvent {
+            let StoredEvent {
+                sequence,
                 proxy_id,
+                stream_id,
+                role,
                 timestamp,
                 event,
             } = event;
+            let event: Box<dyn RecordEvent> = serde_json::from_value(event)?;
             if let Some(ref tx) = self.debug_tx {
                 let _ = tx.send(RecordedEvent {
                     proxy_id,
                     timestamp,
+                    stream_id: stream_id.clone(),
+                    role,
                     event: event.clone(),
                 });
             }
@@ -86,7 +92,10 @@ impl Replayer {
                 self.proxies
             ))?;
             proxy.send(RecordedEventWithLock {
+                sequence,
                 proxy_id,
+                stream_id,
+                role,
                 event,
                 replay_lock: replay_lock_holder,
             })?;

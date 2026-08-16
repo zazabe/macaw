@@ -48,7 +48,7 @@ async fn wasm_plugin_signs_upstream_and_redacts_recording() {
     let recording_bytes = std::fs::read(recording.path()).unwrap();
     let recorded: serde_json::Value = serde_json::from_slice(&recording_bytes).unwrap();
     assert_eq!(
-        recorded["events"][0]["HttpRequest"]["headers"]["x-wasm-signature"],
+        recorded["events"][0]["event"]["HttpRequest"]["headers"]["x-wasm-signature"],
         "<redacted>"
     );
     assert!(

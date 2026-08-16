@@ -50,6 +50,7 @@ async fn test_recorder_multiple_proxies() {
         r#".**.timestamp"# => "[timestamp]",
     }, @r#"
     {
+      "format_version": 2,
       "header": {
         "record_id": "[record_id]",
         "record_seed": "[record_seed]",
@@ -57,45 +58,93 @@ async fn test_recorder_multiple_proxies() {
       },
       "events": [
         {
+          "sequence": 0,
           "proxy": "test_proxy1",
+          "stream": {
+            "protocol": "test",
+            "id": "proxy1_event"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "RequestEvent": {
-            "value": "proxy1_event"
+          "event": {
+            "RequestEvent": {
+              "value": "proxy1_event"
+            }
           }
         },
         {
+          "sequence": 1,
           "proxy": "test_proxy1",
+          "stream": {
+            "protocol": "test",
+            "id": "proxy1_event"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "ResponseEvent": {
-            "value": "response:proxy1_event"
+          "event": {
+            "ResponseEvent": {
+              "value": "response:proxy1_event"
+            }
           }
         },
         {
+          "sequence": 2,
           "proxy": "test_proxy2",
+          "stream": {
+            "protocol": "test",
+            "id": "proxy2_event"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "RequestEvent": {
-            "value": "proxy2_event"
+          "event": {
+            "RequestEvent": {
+              "value": "proxy2_event"
+            }
           }
         },
         {
+          "sequence": 3,
           "proxy": "test_proxy2",
+          "stream": {
+            "protocol": "test",
+            "id": "proxy2_event"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "ResponseEvent": {
-            "value": "response:proxy2_event"
+          "event": {
+            "ResponseEvent": {
+              "value": "response:proxy2_event"
+            }
           }
         },
         {
+          "sequence": 4,
           "proxy": "test_proxy1",
+          "stream": {
+            "protocol": "test",
+            "id": "incoming"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "IncomingEvent": {
-            "value": "incoming_event"
+          "event": {
+            "IncomingEvent": {
+              "value": "incoming_event"
+            }
           }
         },
         {
+          "sequence": 5,
           "proxy": "test_proxy2",
+          "stream": {
+            "protocol": "test",
+            "id": "incoming"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "IncomingEvent": {
-            "value": "incoming_event"
+          "event": {
+            "IncomingEvent": {
+              "value": "incoming_event"
+            }
           }
         }
       ]
@@ -162,13 +211,19 @@ impl ActorHandler<RequestEvent> for TestProxyActor {
     type Reply = Result<ResponseEvent, anyhow::Error>;
 
     async fn handle(&mut self, request: RequestEvent) -> Result<ResponseEvent, anyhow::Error> {
-        self.recorder
-            .send(RecordedEvent::new(self.proxy_id, request.clone()))?;
+        self.recorder.send(RecordedEvent::gate(
+            self.proxy_id,
+            LogicalStreamId::new("test", request.value.clone()),
+            request.clone(),
+        ))?;
         let response = ResponseEvent {
             value: format!("response:{}", request.value),
         };
-        self.recorder
-            .send(RecordedEvent::new(self.proxy_id, response.clone()))?;
+        self.recorder.send(RecordedEvent::emit(
+            self.proxy_id,
+            LogicalStreamId::new("test", request.value),
+            response.clone(),
+        ))?;
         Ok(response)
     }
 }
@@ -177,10 +232,11 @@ impl ActorHandler<IncomingEvent> for TestProxyActor {
     type Reply = ();
 
     async fn handle(&mut self, event: IncomingEvent) {
-        if let Err(e) = self
-            .recorder
-            .send(RecordedEvent::new(self.proxy_id, event.clone()))
-        {
+        if let Err(e) = self.recorder.send(RecordedEvent::emit(
+            self.proxy_id,
+            LogicalStreamId::new("test", "incoming"),
+            event.clone(),
+        )) {
             error!("Failed to record event: {:?}", e);
         }
     }

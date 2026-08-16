@@ -4,22 +4,68 @@ use std::io::BufReader;
 use tokio::fs::File as TokioFile;
 use tokio::io::AsyncWriteExt;
 
-#[derive(Debug, Serialize, Deserialize)]
+pub const RECORD_FORMAT_VERSION: u32 = 2;
+
+/// Versioned, stable DTO for a causal recording.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordFile {
+    pub(crate) format_version: u32,
     pub(crate) header: RecordHeader,
-    pub(crate) events: Vec<RecordedEvent>,
+    pub(crate) events: Vec<StoredEvent>,
 }
 
 impl RecordFile {
     pub fn events_count(&self) -> usize {
         self.events.len()
     }
+
+    pub fn format_version(&self) -> u32 {
+        self.format_version
+    }
+
+    fn validate(&self) -> Result<(), anyhow::Error> {
+        if self.format_version != RECORD_FORMAT_VERSION {
+            anyhow::bail!(
+                "Unsupported recording format version {}, expected {}",
+                self.format_version,
+                RECORD_FORMAT_VERSION
+            );
+        }
+
+        for (index, event) in self.events.iter().enumerate() {
+            let expected = u64::try_from(index)?;
+            if event.sequence.get() != expected {
+                anyhow::bail!(
+                    "Invalid event sequence {}, expected {}",
+                    event.sequence.get(),
+                    expected
+                );
+            }
+            if event.stream_id.protocol().is_empty() || event.stream_id.id().is_empty() {
+                anyhow::bail!(
+                    "Event {} has an empty protocol or logical stream ID",
+                    event.sequence.get()
+                );
+            }
+            serde_json::from_value::<Box<dyn RecordEvent>>(event.event.clone()).map_err(
+                |error| {
+                    anyhow::anyhow!(
+                        "Event {} has an invalid protocol payload: {}",
+                        event.sequence.get(),
+                        error
+                    )
+                },
+            )?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct EventStore {
     header: RecordHeader,
-    events: Vec<RecordedEvent>,
+    events: Vec<StoredEvent>,
 }
 
 impl EventStore {
@@ -53,6 +99,7 @@ impl EventStore {
         let file = File::open(path.as_ref())?;
         let reader = BufReader::new(file);
         let rf: RecordFile = serde_json::from_reader(reader)?;
+        rf.validate()?;
         debug!(
             "Loaded {} events from file: {}",
             rf.events.len(),
@@ -78,6 +125,7 @@ impl EventStore {
             path.as_ref().display()
         );
         let rf = RecordFile {
+            format_version: RECORD_FORMAT_VERSION,
             header: self.header.clone(),
             events: self.events.clone(),
         };
@@ -91,11 +139,13 @@ impl EventStore {
         }
     }
 
-    pub(crate) fn push(&mut self, event: RecordedEvent) {
-        self.events.push(event);
+    pub(crate) fn push(&mut self, event: RecordedEvent) -> Result<(), anyhow::Error> {
+        let sequence = EventSequence::new(self.events.len() as u64);
+        self.events.push(StoredEvent::new(sequence, event)?);
+        Ok(())
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = RecordedEvent> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = StoredEvent> {
         self.events.iter().cloned()
     }
 }

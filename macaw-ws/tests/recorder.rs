@@ -81,6 +81,7 @@ async fn test_recorder_multiple_ws_conns() -> Result<(), anyhow::Error> {
         r#".**.headers.upgrade"# => "[upgrade]",
     }, @r#"
     {
+      "format_version": 2,
       "header": {
         "record_id": "[record_id]",
         "record_seed": "[record_seed]",
@@ -88,205 +89,317 @@ async fn test_recorder_multiple_ws_conns() -> Result<(), anyhow::Error> {
       },
       "events": [
         {
+          "sequence": 0,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 0,
-            "event": {
-              "Open": {
-                "request": {
-                  "method": "GET",
-                  "uri": "/",
-                  "version": "HTTP/1.1",
-                  "headers": {
-                    "connection": "[connection]",
-                    "host": "[host]",
-                    "sec-websocket-key": "[sec-websocket-key]",
-                    "sec-websocket-version": "[sec-websocket-version]",
-                    "upgrade": "[upgrade]"
+          "event": {
+            "Ws": {
+              "event": {
+                "Open": {
+                  "request": {
+                    "headers": {
+                      "connection": "[connection]",
+                      "host": "[host]",
+                      "sec-websocket-key": "[sec-websocket-key]",
+                      "sec-websocket-version": "[sec-websocket-version]",
+                      "upgrade": "[upgrade]"
+                    },
+                    "method": "GET",
+                    "uri": "/",
+                    "version": "HTTP/1.1"
                   }
                 }
-              }
+              },
+              "peer_id": 0
             }
           }
         },
         {
+          "sequence": 1,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "1"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 1,
-            "event": {
-              "Open": {
-                "request": {
-                  "method": "GET",
-                  "uri": "/",
-                  "version": "HTTP/1.1",
-                  "headers": {
-                    "connection": "[connection]",
-                    "host": "[host]",
-                    "sec-websocket-key": "[sec-websocket-key]",
-                    "sec-websocket-version": "[sec-websocket-version]",
-                    "upgrade": "[upgrade]"
+          "event": {
+            "Ws": {
+              "event": {
+                "Open": {
+                  "request": {
+                    "headers": {
+                      "connection": "[connection]",
+                      "host": "[host]",
+                      "sec-websocket-key": "[sec-websocket-key]",
+                      "sec-websocket-version": "[sec-websocket-version]",
+                      "upgrade": "[upgrade]"
+                    },
+                    "method": "GET",
+                    "uri": "/",
+                    "version": "HTTP/1.1"
                   }
                 }
-              }
+              },
+              "peer_id": 1
             }
           }
         },
         {
+          "sequence": 2,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": 0,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "msg1 for conn0"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "msg1 for conn0"
+                  }
                 }
-              }
+              },
+              "peer_id": 0
             }
           }
         },
         {
+          "sequence": 3,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "1"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": 1,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "msg1 for conn1"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "msg1 for conn1"
+                  }
                 }
-              }
+              },
+              "peer_id": 1
             }
           }
         },
         {
+          "sequence": 4,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 0,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "hello from client1"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "hello from client1"
+                  }
                 }
-              }
+              },
+              "peer_id": 0
             }
           }
         },
         {
+          "sequence": 5,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": 0,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "echo: hello from client1"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "echo: hello from client1"
+                  }
                 }
-              }
+              },
+              "peer_id": 0
             }
           }
         },
         {
+          "sequence": 6,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "1"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": 1,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "msg2 for conn1"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "msg2 for conn1"
+                  }
                 }
-              }
+              },
+              "peer_id": 1
             }
           }
         },
         {
+          "sequence": 7,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": 0,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "msg2 for conn0"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "msg2 for conn0"
+                  }
                 }
-              }
+              },
+              "peer_id": 0
             }
           }
         },
         {
+          "sequence": 8,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "1"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 1,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "hello from client2"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "hello from client2"
+                  }
                 }
-              }
+              },
+              "peer_id": 1
             }
           }
         },
         {
+          "sequence": 9,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "1"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": 1,
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "echo: hello from client2"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "echo: hello from client2"
+                  }
                 }
-              }
+              },
+              "peer_id": 1
             }
           }
         },
         {
+          "sequence": 10,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 0,
-            "event": {
-              "Message": {
-                "message": {
-                  "Close": null
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Close": null
+                  }
                 }
-              }
+              },
+              "peer_id": 0
             }
           }
         },
         {
+          "sequence": 11,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 0,
-            "event": "Disconnect"
+          "event": {
+            "Ws": {
+              "event": "Disconnect",
+              "peer_id": 0
+            }
           }
         },
         {
+          "sequence": 12,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "1"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 1,
-            "event": {
-              "Message": {
-                "message": {
-                  "Close": null
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Close": null
+                  }
                 }
-              }
+              },
+              "peer_id": 1
             }
           }
         },
         {
+          "sequence": 13,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "1"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": 1,
-            "event": "Disconnect"
+          "event": {
+            "Ws": {
+              "event": "Disconnect",
+              "peer_id": 1
+            }
           }
         }
       ]
@@ -366,6 +479,7 @@ async fn test_recorder_multiple_ws_proxies() -> Result<(), anyhow::Error> {
         r#".**.headers.upgrade"# => "[upgrade]",
     }, @r#"
     {
+      "format_version": 2,
       "header": {
         "record_id": "[record_id]",
         "record_seed": "[record_seed]",
@@ -373,149 +487,229 @@ async fn test_recorder_multiple_ws_proxies() -> Result<(), anyhow::Error> {
       },
       "events": [
         {
+          "sequence": 0,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Open": {
-                "request": {
-                  "method": "GET",
-                  "uri": "/",
-                  "version": "HTTP/1.1",
-                  "headers": {
-                    "connection": "[connection]",
-                    "host": "[host]",
-                    "sec-websocket-key": "[sec-websocket-key]",
-                    "sec-websocket-version": "[sec-websocket-version]",
-                    "upgrade": "[upgrade]"
+          "event": {
+            "Ws": {
+              "event": {
+                "Open": {
+                  "request": {
+                    "headers": {
+                      "connection": "[connection]",
+                      "host": "[host]",
+                      "sec-websocket-key": "[sec-websocket-key]",
+                      "sec-websocket-version": "[sec-websocket-version]",
+                      "upgrade": "[upgrade]"
+                    },
+                    "method": "GET",
+                    "uri": "/",
+                    "version": "HTTP/1.1"
                   }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 1,
           "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "hello from proxy1"
-                }
-              }
-            }
-          }
-        },
-        {
-          "proxy": "ws_proxy1",
-          "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "echo: hello from proxy1"
-                }
-              }
-            }
-          }
-        },
-        {
-          "proxy": "ws_proxy1",
-          "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Close": null
-                }
-              }
-            }
-          }
-        },
-        {
-          "proxy": "ws_proxy1",
-          "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": "Disconnect"
-          }
-        },
-        {
-          "proxy": "ws_proxy2",
-          "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Open": {
-                "request": {
-                  "method": "GET",
-                  "uri": "/",
-                  "version": "HTTP/1.1",
-                  "headers": {
-                    "connection": "[connection]",
-                    "host": "[host]",
-                    "sec-websocket-key": "[sec-websocket-key]",
-                    "sec-websocket-version": "[sec-websocket-version]",
-                    "upgrade": "[upgrade]"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "hello from proxy1"
                   }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
-          "proxy": "ws_proxy2",
+          "sequence": 2,
+          "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "hello from proxy2"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "echo: hello from proxy1"
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
-          "proxy": "ws_proxy2",
+          "sequence": 3,
+          "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "echo: hello from proxy2"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Close": null
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
-          "proxy": "ws_proxy2",
+          "sequence": 4,
+          "proxy": "ws_proxy1",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Close": null
+          "event": {
+            "Ws": {
+              "event": "Disconnect",
+              "peer_id": "[peer_id]"
+            }
+          }
+        },
+        {
+          "sequence": 5,
+          "proxy": "ws_proxy2",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
+          "timestamp": "[timestamp]",
+          "event": {
+            "Ws": {
+              "event": {
+                "Open": {
+                  "request": {
+                    "headers": {
+                      "connection": "[connection]",
+                      "host": "[host]",
+                      "sec-websocket-key": "[sec-websocket-key]",
+                      "sec-websocket-version": "[sec-websocket-version]",
+                      "upgrade": "[upgrade]"
+                    },
+                    "method": "GET",
+                    "uri": "/",
+                    "version": "HTTP/1.1"
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 6,
           "proxy": "ws_proxy2",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": "Disconnect"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "hello from proxy2"
+                  }
+                }
+              },
+              "peer_id": "[peer_id]"
+            }
+          }
+        },
+        {
+          "sequence": 7,
+          "proxy": "ws_proxy2",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "emit",
+          "timestamp": "[timestamp]",
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "echo: hello from proxy2"
+                  }
+                }
+              },
+              "peer_id": "[peer_id]"
+            }
+          }
+        },
+        {
+          "sequence": 8,
+          "proxy": "ws_proxy2",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
+          "timestamp": "[timestamp]",
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Close": null
+                  }
+                }
+              },
+              "peer_id": "[peer_id]"
+            }
+          }
+        },
+        {
+          "sequence": 9,
+          "proxy": "ws_proxy2",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
+          "timestamp": "[timestamp]",
+          "event": {
+            "Ws": {
+              "event": "Disconnect",
+              "peer_id": "[peer_id]"
+            }
           }
         }
       ]
@@ -601,6 +795,7 @@ async fn test_recorder_ws_transform() -> Result<(), anyhow::Error> {
         r#".**.headers.upgrade"# => "[upgrade]",
     }, @r#"
     {
+      "format_version": 2,
       "header": {
         "record_id": "[record_id]",
         "record_seed": "[record_seed]",
@@ -608,104 +803,160 @@ async fn test_recorder_ws_transform() -> Result<(), anyhow::Error> {
       },
       "events": [
         {
+          "sequence": 0,
           "proxy": "ws_proxy",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Open": {
-                "request": {
-                  "method": "GET",
-                  "uri": "/",
-                  "version": "HTTP/1.1",
-                  "headers": {
-                    "connection": "[connection]",
-                    "host": "[host]",
-                    "sec-websocket-key": "[sec-websocket-key]",
-                    "sec-websocket-version": "[sec-websocket-version]",
-                    "upgrade": "[upgrade]"
+          "event": {
+            "Ws": {
+              "event": {
+                "Open": {
+                  "request": {
+                    "headers": {
+                      "connection": "[connection]",
+                      "host": "[host]",
+                      "sec-websocket-key": "[sec-websocket-key]",
+                      "sec-websocket-version": "[sec-websocket-version]",
+                      "upgrade": "[upgrade]"
+                    },
+                    "method": "GET",
+                    "uri": "/",
+                    "version": "HTTP/1.1"
                   }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 1,
           "proxy": "ws_proxy",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "request1"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "request1"
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 2,
           "proxy": "ws_proxy",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "echo:request1"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "echo:request1"
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 3,
           "proxy": "ws_proxy",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "This is a REDACTED message"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "This is a REDACTED message"
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 4,
           "proxy": "ws_proxy",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "WsUpstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Text": "echo:This is a secret message"
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Text": "echo:This is a secret message"
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 5,
           "proxy": "ws_proxy",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": {
-              "Message": {
-                "message": {
-                  "Close": null
+          "event": {
+            "Ws": {
+              "event": {
+                "Message": {
+                  "message": {
+                    "Close": null
+                  }
                 }
-              }
+              },
+              "peer_id": "[peer_id]"
             }
           }
         },
         {
+          "sequence": 6,
           "proxy": "ws_proxy",
+          "stream": {
+            "protocol": "ws",
+            "id": "0"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "WsDownstream": {
-            "peer_id": "[peer_id]",
-            "event": "Disconnect"
+          "event": {
+            "Ws": {
+              "event": "Disconnect",
+              "peer_id": "[peer_id]"
+            }
           }
         }
       ]

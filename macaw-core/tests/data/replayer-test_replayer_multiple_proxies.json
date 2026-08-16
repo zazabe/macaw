@@ -1,4 +1,5 @@
 {
+    "format_version": 2,
     "header": {
         "record_id": "bf7c4381-5315-4d39-90e2-a48cf93f2951",
         "record_seed": "9a99deab-d88c-43cd-862c-2b0b5c6696a3",
@@ -6,45 +7,93 @@
     },
     "events": [
         {
+            "sequence": 0,
             "proxy": "test_proxy1",
+            "stream": {
+                "protocol": "test",
+                "id": "proxy1_event"
+            },
+            "role": "gate",
             "timestamp": "2025-11-15T10:39:24.874846877Z",
-            "RequestEvent": {
-                "value": "proxy1_event"
+            "event": {
+                "RequestEvent": {
+                    "value": "proxy1_event"
+                }
             }
         },
         {
+            "sequence": 1,
             "proxy": "test_proxy1",
+            "stream": {
+                "protocol": "test",
+                "id": "proxy1_event"
+            },
+            "role": "emit",
             "timestamp": "2025-11-15T10:39:24.874863989Z",
-            "ResponseEvent": {
-                "value": "response:proxy1_event"
+            "event": {
+                "ResponseEvent": {
+                    "value": "response:proxy1_event"
+                }
             }
         },
         {
+            "sequence": 2,
             "proxy": "test_proxy2",
+            "stream": {
+                "protocol": "test",
+                "id": "proxy2_event"
+            },
+            "role": "gate",
             "timestamp": "2025-11-15T10:39:24.874947116Z",
-            "RequestEvent": {
-                "value": "proxy2_event"
+            "event": {
+                "RequestEvent": {
+                    "value": "proxy2_event"
+                }
             }
         },
         {
+            "sequence": 3,
             "proxy": "test_proxy2",
+            "stream": {
+                "protocol": "test",
+                "id": "proxy2_event"
+            },
+            "role": "emit",
             "timestamp": "2025-11-15T10:39:24.874957395Z",
-            "ResponseEvent": {
-                "value": "response:proxy2_event"
+            "event": {
+                "ResponseEvent": {
+                    "value": "response:proxy2_event"
+                }
             }
         },
         {
+            "sequence": 4,
             "proxy": "test_proxy1",
+            "stream": {
+                "protocol": "test",
+                "id": "incoming"
+            },
+            "role": "emit",
             "timestamp": "2025-11-15T10:39:24.875013310Z",
-            "IncomingEvent": {
-                "value": "incoming_event"
+            "event": {
+                "IncomingEvent": {
+                    "value": "incoming_event"
+                }
             }
         },
         {
+            "sequence": 5,
             "proxy": "test_proxy2",
+            "stream": {
+                "protocol": "test",
+                "id": "incoming"
+            },
+            "role": "emit",
             "timestamp": "2025-11-15T10:39:24.875023068Z",
-            "IncomingEvent": {
-                "value": "incoming_event"
+            "event": {
+                "IncomingEvent": {
+                    "value": "incoming_event"
+                }
             }
         }
     ]

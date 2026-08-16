@@ -1,4 +1,5 @@
 {
+    "format_version": 2,
     "header": {
         "record_id": "25f4655c-80ae-4362-b1e7-44905a932a73",
         "record_seed": "1421f3de-5ca3-4f95-adf9-291baabeabae",
@@ -6,35 +7,51 @@
     },
     "events": [
         {
+            "sequence": 0,
             "proxy": "http_proxy",
+            "stream": {
+                "protocol": "http",
+                "id": "bc497389-b029-4265-875b-dfbb26623b0b"
+            },
+            "role": "gate",
             "timestamp": "2025-12-13T08:43:35.539029207Z",
-            "HttpRequest": {
-                "request_id": "bc497389-b029-4265-875b-dfbb26623b0b",
-                "method": "POST",
-                "uri": "/test",
-                "version": "HTTP/1.1",
-                "headers": {
-                    "accept": "*/*",
-                    "content-length": "12",
-                    "host": "127.0.0.1:38717",
-                    "x-signature": "REDACTED",
-                    "x-timestamp": "TIMESTAMP"
-                },
-                "body": "request1"
+            "event": {
+                "HttpRequest": {
+                    "request_id": "bc497389-b029-4265-875b-dfbb26623b0b",
+                    "method": "POST",
+                    "uri": "/test",
+                    "version": "HTTP/1.1",
+                    "headers": {
+                        "accept": "*/*",
+                        "content-length": "12",
+                        "host": "127.0.0.1:38717",
+                        "x-signature": "REDACTED",
+                        "x-timestamp": "TIMESTAMP"
+                    },
+                    "body": "request1"
+                }
             }
         },
         {
+            "sequence": 1,
             "proxy": "http_proxy",
+            "stream": {
+                "protocol": "http",
+                "id": "bc497389-b029-4265-875b-dfbb26623b0b"
+            },
+            "role": "emit",
             "timestamp": "2025-12-13T08:43:35.541213280Z",
-            "HttpResponse": {
-                "request_id": "bc497389-b029-4265-875b-dfbb26623b0b",
-                "status": 200,
-                "version": "HTTP/1.1",
-                "headers": {
-                    "content-length": "13",
-                    "date": "Sat, 13 Dec 2025 08:43:35 GMT"
-                },
-                "body": "response1"
+            "event": {
+                "HttpResponse": {
+                    "request_id": "bc497389-b029-4265-875b-dfbb26623b0b",
+                    "status": 200,
+                    "version": "HTTP/1.1",
+                    "headers": {
+                        "content-length": "13",
+                        "date": "Sat, 13 Dec 2025 08:43:35 GMT"
+                    },
+                    "body": "response1"
+                }
             }
         }
     ]

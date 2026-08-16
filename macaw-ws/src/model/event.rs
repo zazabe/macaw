@@ -8,7 +8,7 @@ use tokio_tungstenite::tungstenite::{
 use crate::lib::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsUpstreamEvent {
+pub(crate) struct WsRecordedEvent {
     pub(crate) peer_id: WsPeerId,
     pub(crate) event: WsEvent,
 }
@@ -38,33 +38,8 @@ fn format_ws_message(msg: &WsMessage) -> String {
     }
 }
 
-#[typetag::serde(name = "WsUpstream")]
-impl RecordEvent for WsUpstreamEvent {
-    fn format_debug(&self) -> RecordFormatter {
-        RecordFormatter::new(
-            DebugDirection::UpstreamToDownstream,
-            vec![
-                RecordPart::StreamType("WS".to_string()),
-                RecordPart::Content(format_ws_event(&self.event)),
-            ],
-        )
-    }
-}
-
-impl WsUpstreamEvent {
-    pub(crate) fn new(peer_id: WsPeerId, event: WsEvent) -> Self {
-        Self { peer_id, event }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WsDownstreamEvent {
-    pub(crate) peer_id: WsPeerId,
-    pub(crate) event: WsEvent,
-}
-
-#[typetag::serde(name = "WsDownstream")]
-impl RecordEvent for WsDownstreamEvent {
+#[typetag::serde(name = "Ws")]
+impl RecordEvent for WsRecordedEvent {
     fn format_debug(&self) -> RecordFormatter {
         RecordFormatter::new(
             DebugDirection::DownstreamToUpstream,
@@ -76,7 +51,7 @@ impl RecordEvent for WsDownstreamEvent {
     }
 }
 
-impl WsDownstreamEvent {
+impl WsRecordedEvent {
     pub(crate) fn new(peer_id: WsPeerId, event: WsEvent) -> Self {
         Self { peer_id, event }
     }

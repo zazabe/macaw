@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
 use futures::StreamExt;
-use macaw::core::{DebugDirection, RecordPart, RecordedEvent};
+use macaw::core::{DebugDirection, RecordPart, RecordedEvent, ReplayRole};
 use macaw::session::SessionState;
 use model::{HealthResponse, ProfileResponse, SessionResponse, TrafficStreamEvent};
 use serde::Serialize;
@@ -755,23 +755,16 @@ fn traffic_matches(event: &RecordedEvent, options: &WatchOptions) -> bool {
             .proxy
             .iter()
             .any(|proxy| proxy == event.proxy_id.as_str());
-    let formatter = event.event.format_debug();
     let direction_matches = match options.direction {
         DirectionFilter::Both => true,
-        DirectionFilter::Request => formatter.direction() == DebugDirection::DownstreamToUpstream,
-        DirectionFilter::Response => formatter.direction() == DebugDirection::UpstreamToDownstream,
+        DirectionFilter::Request => event.role == ReplayRole::Gate,
+        DirectionFilter::Response => event.role == ReplayRole::Emit,
     };
     let protocol_matches = options.protocol.is_empty()
-        || formatter.parts().iter().any(|part| {
-            matches!(
-                part,
-                RecordPart::StreamType(protocol)
-                    if options
-                        .protocol
-                        .iter()
-                        .any(|filter| filter.eq_ignore_ascii_case(protocol))
-            )
-        });
+        || options
+            .protocol
+            .iter()
+            .any(|protocol| protocol.eq_ignore_ascii_case(event.stream_id.protocol()));
     proxy_matches && direction_matches && protocol_matches
 }
 
@@ -897,7 +890,11 @@ fn print_pretty_traffic(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let arrow = formatter.direction().arrow();
+    let arrow = match event.role {
+        ReplayRole::Gate => DebugDirection::DownstreamToUpstream,
+        ReplayRole::Emit => DebugDirection::UpstreamToDownstream,
+    }
+    .arrow();
     let proxy = format_proxy_id(event.proxy_id.as_str(), proxy_width);
     let terminal_width = std::io::stdout()
         .is_terminal()
@@ -1053,6 +1050,8 @@ mod tests {
     fn traffic_filters_are_combined() {
         let event = RecordedEvent::new(
             "api".parse().unwrap(),
+            macaw::core::LogicalStreamId::new("http", "test-request"),
+            ReplayRole::Gate,
             macaw::http::HttpRequestEvent {
                 request_id: uuid::Uuid::new_v4(),
                 method: hyper::Method::GET,

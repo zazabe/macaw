@@ -97,11 +97,13 @@ async fn test_recorder_multiple_http_proxies() {
         r#".header.record_id"# => "[record_id]",
         r#".header.record_seed"# => "[record_seed]",
         r#".**.timestamp"# => "[timestamp]",
+        r#".**.stream.id"# => "[stream_id]",
         r#".**.request_id"# => "[request_id]",
         r#".**.headers.host"# => "[host]",
         r#".**.headers.date"# => "[date]",
     }, @r#"
     {
+      "format_version": 2,
       "header": {
         "record_id": "[record_id]",
         "record_seed": "[record_seed]",
@@ -109,61 +111,93 @@ async fn test_recorder_multiple_http_proxies() {
       },
       "events": [
         {
+          "sequence": 0,
           "proxy": "http_proxy1",
+          "stream": {
+            "protocol": "http",
+            "id": "[stream_id]"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "HttpRequest": {
-            "request_id": "[request_id]",
-            "method": "GET",
-            "uri": "/test1",
-            "version": "HTTP/1.1",
-            "headers": {
-              "accept": "*/*",
-              "host": "[host]"
-            },
-            "body": null
+          "event": {
+            "HttpRequest": {
+              "body": null,
+              "headers": {
+                "accept": "*/*",
+                "host": "[host]"
+              },
+              "method": "GET",
+              "request_id": "[request_id]",
+              "uri": "/test1",
+              "version": "HTTP/1.1"
+            }
           }
         },
         {
+          "sequence": 1,
           "proxy": "http_proxy1",
+          "stream": {
+            "protocol": "http",
+            "id": "[stream_id]"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "HttpResponse": {
-            "request_id": "[request_id]",
-            "status": 200,
-            "version": "HTTP/1.1",
-            "headers": {
-              "content-length": "9",
-              "date": "[date]"
-            },
-            "body": "response1"
+          "event": {
+            "HttpResponse": {
+              "body": "response1",
+              "headers": {
+                "content-length": "9",
+                "date": "[date]"
+              },
+              "request_id": "[request_id]",
+              "status": 200,
+              "version": "HTTP/1.1"
+            }
           }
         },
         {
+          "sequence": 2,
           "proxy": "http_proxy2",
+          "stream": {
+            "protocol": "http",
+            "id": "[stream_id]"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "HttpRequest": {
-            "request_id": "[request_id]",
-            "method": "GET",
-            "uri": "/test2",
-            "version": "HTTP/1.1",
-            "headers": {
-              "accept": "*/*",
-              "host": "[host]"
-            },
-            "body": null
+          "event": {
+            "HttpRequest": {
+              "body": null,
+              "headers": {
+                "accept": "*/*",
+                "host": "[host]"
+              },
+              "method": "GET",
+              "request_id": "[request_id]",
+              "uri": "/test2",
+              "version": "HTTP/1.1"
+            }
           }
         },
         {
+          "sequence": 3,
           "proxy": "http_proxy2",
+          "stream": {
+            "protocol": "http",
+            "id": "[stream_id]"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "HttpResponse": {
-            "request_id": "[request_id]",
-            "status": 200,
-            "version": "HTTP/1.1",
-            "headers": {
-              "content-length": "9",
-              "date": "[date]"
-            },
-            "body": "response2"
+          "event": {
+            "HttpResponse": {
+              "body": "response2",
+              "headers": {
+                "content-length": "9",
+                "date": "[date]"
+              },
+              "request_id": "[request_id]",
+              "status": 200,
+              "version": "HTTP/1.1"
+            }
           }
         }
       ]
@@ -325,12 +359,14 @@ async fn test_recorder_http_transform() {
       r#".header.record_id"# => "[record_id]",
       r#".header.record_seed"# => "[record_seed]",
       r#".**.timestamp"# => "[timestamp]",
+      r#".**.stream.id"# => "[stream_id]",
       r#".**.request_id"# => "[request_id]",
       r#".**.uri"# => "[uri]",
       r#".**.headers.host"# => "[host]",
       r#".**.headers.date"# => "[date]",
   }, @r#"
     {
+      "format_version": 2,
       "header": {
         "record_id": "[record_id]",
         "record_seed": "[record_seed]",
@@ -338,35 +374,51 @@ async fn test_recorder_http_transform() {
       },
       "events": [
         {
+          "sequence": 0,
           "proxy": "http_proxy",
+          "stream": {
+            "protocol": "http",
+            "id": "[stream_id]"
+          },
+          "role": "gate",
           "timestamp": "[timestamp]",
-          "HttpRequest": {
-            "request_id": "[request_id]",
-            "method": "POST",
-            "uri": "[uri]",
-            "version": "HTTP/1.1",
-            "headers": {
-              "accept": "*/*",
-              "content-length": "28",
-              "host": "[host]",
-              "x-signature": "REDACTED",
-              "x-timestamp": "TIMESTAMP"
-            },
-            "body": "request1"
+          "event": {
+            "HttpRequest": {
+              "body": "request1",
+              "headers": {
+                "accept": "*/*",
+                "content-length": "28",
+                "host": "[host]",
+                "x-signature": "REDACTED",
+                "x-timestamp": "TIMESTAMP"
+              },
+              "method": "POST",
+              "request_id": "[request_id]",
+              "uri": "[uri]",
+              "version": "HTTP/1.1"
+            }
           }
         },
         {
+          "sequence": 1,
           "proxy": "http_proxy",
+          "stream": {
+            "protocol": "http",
+            "id": "[stream_id]"
+          },
+          "role": "emit",
           "timestamp": "[timestamp]",
-          "HttpResponse": {
-            "request_id": "[request_id]",
-            "status": 200,
-            "version": "HTTP/1.1",
-            "headers": {
-              "content-length": "29",
-              "date": "[date]"
-            },
-            "body": "response1"
+          "event": {
+            "HttpResponse": {
+              "body": "response1",
+              "headers": {
+                "content-length": "29",
+                "date": "[date]"
+              },
+              "request_id": "[request_id]",
+              "status": 200,
+              "version": "HTTP/1.1"
+            }
           }
         }
       ]
@@ -490,6 +542,7 @@ async fn test_recorder_client_disconnect_before_complete() {
     }, @r#"
     {
       "events": [],
+      "format_version": 2,
       "header": {
         "record_id": "[record_id]",
         "record_seed": "[record_seed]",
